@@ -1,0 +1,21 @@
+# ============================================
+# COPY THESE 4 LINES TO YOUR app.py
+# ============================================
+# 
+# Add these lines RIGHT AFTER the line: jwt = JWTManager(app)
+# (which is around line 40 in your app.py)
+#
+# The line should look like this:
+# jwt = JWTManager(app)
+# 
+# ADD THESE 4 LINES BELOW IT:
+# ============================================
+
+# Setup enhanced logging for Dozzle
+from enhanced_logging import setup_app_logging, log_request
+setup_app_logging(app)
+log_request(app)
+
+# ============================================
+# That's it! Just these 4 lines.
+# ============================================

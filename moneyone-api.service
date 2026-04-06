@@ -1,0 +1,36 @@
+[Unit]
+Description=MoneyOne API Service
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=notify
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/backend
+Environment="PATH=/home/ubuntu/backend/venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Gunicorn command
+ExecStart=/home/ubuntu/backend/venv/bin/gunicorn \
+    --config gunicorn_config.py \
+    app:app
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/var/log/moneyone/stdout.log
+StandardError=append:/var/log/moneyone/stderr.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
