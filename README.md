@@ -1,4 +1,4 @@
-# 💰 MoneyOne Admin Panel
+# 💰 ORCHPAY Admin Panel
 
 A secure admin panel for MoneyOne payment gateway with JWT authentication, CAPTCHA verification, and comprehensive activity logging.
 
@@ -51,11 +51,6 @@ npm run dev
 - **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:5000
 - **Health Check**: http://localhost:5000/api/admin/health
-
-## 🔑 Default Credentials
-
-- **Admin ID**: `6239572985`
-- **Password**: `admin@123`
 
 ⚠️ **Change these in production!**
 
