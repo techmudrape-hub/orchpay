@@ -141,22 +141,33 @@ export default function GenerateQRMudrape() {
       console.log('Order data:', orderData)
       console.log('PG Partner from response:', orderData.pg_partner)
       
-      // Get the payment data (could be UPI string or image URL)
-      const paymentData = orderData.payment_link || orderData.qr_string || orderData.upi_link
+      // Get the payment data - prioritize UPI strings for QR generation
+      // Priority: intent_url > upi_link > qr_string > payment_link
+      const intentUrl = orderData.intent_url || orderData.upi_link || orderData.qr_string
+      const paymentLink = orderData.payment_link
+      
+      console.log('Intent URL:', intentUrl)
+      console.log('Payment Link:', paymentLink)
+      console.log('Gateway:', gateway)
+      
+      // Determine if we should use intent_url or payment_link
+      let paymentData = intentUrl || paymentLink
       
       console.log('Payment data:', paymentData)
       
-      // Check if it's an image URL or a UPI string
+      // Check if it's an image URL (QR code image from gateway)
       const isImageUrl = paymentData && (
-        paymentData.startsWith('http://') || 
-        paymentData.startsWith('https://') ||
         paymentData.includes('.png') ||
         paymentData.includes('.jpg') ||
         paymentData.includes('showQr') ||
         paymentData.includes('qrPath')
       )
       
+      // Check if it's a UPI string (starts with upi://)
+      const isUpiString = paymentData && paymentData.startsWith('upi://')
+      
       console.log('Is image URL?', isImageUrl)
+      console.log('Is UPI string?', isUpiString)
       console.log('Payment data type:', typeof paymentData)
       
       if (isImageUrl) {
@@ -169,12 +180,12 @@ export default function GenerateQRMudrape() {
           upiLink: paymentData,
           isImageUrl: true
         })
-      } else {
-        // It's a UPI string (PayU/Mudrape) - generate QR code
-        console.log('Detected UPI string, generating QR code:', paymentData)
+      } else if (isUpiString || intentUrl) {
+        // It's a UPI string or intent URL - generate QR code
+        console.log('Detected UPI/Intent string, generating QR code:', paymentData)
         
         let qrImageData
-        if (gateway === 'PayU') {
+        if (gateway === 'PayU' && orderData.payment_params) {
           // For PayU, generate payment URL with parameters
           const paymentParams = new URLSearchParams(orderData.payment_params)
           const paymentUrl = `${orderData.payment_url}?${paymentParams.toString()}`
@@ -195,7 +206,7 @@ export default function GenerateQRMudrape() {
             isImageUrl: false
           })
         } else {
-          // For Mudrape or others with UPI string
+          // For Mudrape, RisexPay, and others with UPI/Intent string
           qrImageData = await QRCodeLib.toDataURL(paymentData, {
             width: 300,
             margin: 2,
@@ -214,6 +225,11 @@ export default function GenerateQRMudrape() {
         }
         
         setQrImage(qrImageData)
+      } else {
+        // Fallback: treat as web URL - don't generate QR, show error
+        console.error('No valid UPI string or QR image URL found')
+        toast.error('Unable to generate QR code - invalid payment data format')
+        return
       }
       
       // Start polling for payment status
@@ -324,9 +340,14 @@ export default function GenerateQRMudrape() {
   const handleCopyLink = () => {
     if (!qrData) return
     
-    const link = gateway === 'Mudrape' ? qrData.upiLink : qrData.paymentUrl
-    navigator.clipboard.writeText(link)
-    toast.success('Payment link copied to clipboard!')
+    // Use the UPI link that was used to generate the QR code
+    const link = qrData.upiLink || qrData.paymentUrl || qrData.payment_link
+    if (link) {
+      navigator.clipboard.writeText(link)
+      toast.success('Payment link copied to clipboard!')
+    } else {
+      toast.error('No payment link available')
+    }
   }
 
   const handleReset = () => {
@@ -522,6 +543,26 @@ export default function GenerateQRMudrape() {
                     <span className="text-gray-600">Gateway:</span>
                     <span className="font-medium">{qrData.gateway}</span>
                   </div>
+                </div>
+
+                {/* Payment Links */}
+                <div className="space-y-3 text-sm pt-3 border-t border-gray-100 mt-3">
+                  {qrData.payment_link && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-gray-600 font-medium text-xs uppercase tracking-wider">Payment Link:</span>
+                      <a href={qrData.payment_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all bg-blue-50 p-2 rounded border border-blue-100">
+                        {qrData.payment_link}
+                      </a>
+                    </div>
+                  )}
+                  {(qrData.intent_url || qrData.upiLink || qrData.upi_link || qrData.qr_string) && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-gray-600 font-medium text-xs uppercase tracking-wider">Intent / UPI Link:</span>
+                      <div className="text-gray-800 break-all font-mono text-xs bg-gray-50 p-2 rounded border border-gray-200">
+                        {qrData.intent_url || qrData.upiLink || qrData.upi_link || qrData.qr_string}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Action Buttons */}

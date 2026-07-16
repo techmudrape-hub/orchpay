@@ -15,6 +15,7 @@ export default function ServiceRouting() {
   
   const [selectedPayinGateways, setSelectedPayinGateways] = useState([]);
   const [selectedPayoutGateways, setSelectedPayoutGateways] = useState([]);
+  const [risexpayAutoSuccess, setRisexpayAutoSuccess] = useState(true);
 
   useEffect(() => {
     fetchInitialData();
@@ -31,14 +32,19 @@ export default function ServiceRouting() {
   const fetchInitialData = async () => {
     try {
       setLoading(true);
-      const [routesRes, merchantsRes, partnersRes] = await Promise.all([
+      const [routesRes, merchantsRes, partnersRes, risexpayRes] = await Promise.all([
         adminAPI.getServiceRouting(),
         adminAPI.getMerchantsForRouting(),
-        adminAPI.getPGPartners()
+        adminAPI.getPGPartners(),
+        adminAPI.getRisexpayAutoSuccess(activeTab === 'SINGLE_USER' ? selectedMerchant : null).catch(() => ({ success: false }))
       ]);
 
       if (routesRes.success) {
         setRoutes(routesRes.routes);
+      }
+      
+      if (risexpayRes && risexpayRes.success) {
+        setRisexpayAutoSuccess(risexpayRes.enabled);
       }
       
       if (merchantsRes.success) {
@@ -58,20 +64,29 @@ export default function ServiceRouting() {
     }
   };
 
-  const fetchAllUsersRoutes = () => {
-    const payinActive = routes
-      .filter(r => r.service_type === 'PAYIN' && r.routing_type === 'ALL_USERS' && r.is_active)
-      .map(r => r.pg_partner);
-    
-    const payoutActive = routes
-      .filter(r => r.service_type === 'PAYOUT' && r.routing_type === 'ALL_USERS' && r.is_active)
-      .map(r => r.pg_partner);
-    
-    setSelectedPayinGateways(payinActive);
-    setSelectedPayoutGateways(payoutActive);
+  const fetchAllUsersRoutes = async () => {
+    try {
+      const payinActive = routes
+        .filter(r => r.service_type === 'PAYIN' && r.routing_type === 'ALL_USERS' && r.is_active)
+        .map(r => r.pg_partner);
+      
+      const payoutActive = routes
+        .filter(r => r.service_type === 'PAYOUT' && r.routing_type === 'ALL_USERS' && r.is_active)
+        .map(r => r.pg_partner);
+      
+      setSelectedPayinGateways(payinActive);
+      setSelectedPayoutGateways(payoutActive);
+      
+      const risexpayRes = await adminAPI.getRisexpayAutoSuccess(null).catch(() => ({ success: false }));
+      if (risexpayRes && risexpayRes.success) {
+        setRisexpayAutoSuccess(risexpayRes.enabled);
+      }
+    } catch (error) {
+      toast.error('Failed to fetch routes');
+    }
   };
 
-  const fetchMerchantRoutes = () => {
+  const fetchMerchantRoutes = async () => {
     if (!selectedMerchant) {
       setSelectedPayinGateways([]);
       setSelectedPayoutGateways([]);
@@ -98,6 +113,15 @@ export default function ServiceRouting() {
     
     setSelectedPayinGateways(payinActive);
     setSelectedPayoutGateways(payoutActive);
+
+    try {
+      const risexpayRes = await adminAPI.getRisexpayAutoSuccess(selectedMerchant).catch(() => ({ success: false }));
+      if (risexpayRes && risexpayRes.success) {
+        setRisexpayAutoSuccess(risexpayRes.enabled);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handlePayinToggle = async (gatewayId) => {
@@ -188,6 +212,28 @@ export default function ServiceRouting() {
       }
     } catch (error) {
       toast.error('Failed to update gateway');
+      console.error(error);
+    }
+  };
+
+  const handleToggleRisexpayAutoSuccess = async () => {
+    try {
+      const targetMerchant = activeTab === 'SINGLE_USER' ? selectedMerchant : null;
+      if (activeTab === 'SINGLE_USER' && !selectedMerchant) {
+        toast.error('Please select a merchant first');
+        return;
+      }
+      
+      const newState = !risexpayAutoSuccess;
+      const response = await adminAPI.toggleRisexpayAutoSuccess(newState, targetMerchant);
+      if (response.success) {
+        setRisexpayAutoSuccess(newState);
+        toast.success(`Risexpay Auto Success is now ${newState ? 'ON' : 'OFF'}${targetMerchant ? ' for this merchant' : ' globally'}`);
+      } else {
+        toast.error(response.message || 'Failed to toggle Auto Success');
+      }
+    } catch (error) {
+      toast.error('Failed to toggle Auto Success');
       console.error(error);
     }
   };
@@ -295,7 +341,7 @@ export default function ServiceRouting() {
                     pgPartners
                       .filter(gateway => gateway.supports.includes('PAYOUT'))
                       .map((gateway) => (
-                        <div key={gateway.id} className="flex items-center space-x-2">
+                        <div key={gateway.id} className="flex items-center space-x-2 w-full">
                           <input
                             type="radio"
                             id={`payout-${gateway.id}`}
@@ -306,10 +352,21 @@ export default function ServiceRouting() {
                           />
                           <label
                             htmlFor={`payout-${gateway.id}`}
-                            className="text-sm font-medium leading-none cursor-pointer"
+                            className="text-sm font-medium leading-none cursor-pointer flex-grow"
                           >
                             {gateway.name}
                           </label>
+                          {gateway.id === 'RISEXPAY' && (
+                            <Button
+                              type="button"
+                              variant={risexpayAutoSuccess ? "default" : "outline"}
+                              size="sm"
+                              className={`h-7 px-3 text-xs ${risexpayAutoSuccess ? 'bg-green-600 hover:bg-green-700' : 'text-gray-600'}`}
+                              onClick={handleToggleRisexpayAutoSuccess}
+                            >
+                              Auto Success {risexpayAutoSuccess ? 'ON' : 'OFF'}
+                            </Button>
+                          )}
                         </div>
                       ))
                   )}

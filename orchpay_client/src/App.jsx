@@ -36,26 +36,39 @@ import GenerateQR from './pages/GenerateQR'
 // My Commercials
 import MyCommercials from './pages/MyCommercials'
 
+// Chargebacks
+import Chargebacks from './pages/Chargebacks'
+import ChargebackDeductions from './pages/ChargebackDeductions'
+
+// MaxPe Checkout
+import MaxpeCheckout from './pages/MaxpeCheckout'
+
+// QR Transactions
+import QRTransactions from './pages/QRTransactions/QRTransactions'
+
 function App() {
   // Use the page title hook to dynamically update title based on route
   usePageTitle();
-  
+
   return (
     <>
       <Routes>
+        {/* Public Route - MaxPe Checkout (no auth required) */}
+        <Route path="/checkout/maxpe" element={<MaxpeCheckout />} />
+
         {/* Public Route - Login */}
-        <Route 
-          path="/login" 
+        <Route
+          path="/login"
           element={
             <PublicRoute>
               <Login />
             </PublicRoute>
-          } 
+          }
         />
-        
+
         {/* Protected Routes - Dashboard */}
-        <Route 
-          path="/" 
+        <Route
+          path="/"
           element={
             <ProtectedRoute>
               <DashboardLayout />
@@ -63,37 +76,44 @@ function App() {
           }
         >
           <Route index element={<Dashboard />} />
-          
+
           {/* Transaction Routes */}
           <Route path="transactions/payin-report" element={<PayinReport />} />
           <Route path="transactions/payout-report" element={<PayoutReport />} />
-          
+
           {/* Wallet Routes */}
           <Route path="wallet/overview" element={<WalletOverview />} />
           <Route path="wallet/statement" element={<WalletStatement />} />
-          
+
           {/* Fund Manager Routes */}
           <Route path="fund-manager/settle" element={<SettleFund />} />
           <Route path="fund-manager/request" element={<FundRequest />} />
-          
+
           {/* Security Routes */}
           <Route path="security/change-password" element={<ChangePassword />} />
           <Route path="security/change-pin" element={<ChangePin />} />
-          
+
           {/* Developer Zone Routes */}
           <Route path="developer/documentation" element={<Documentation />} />
           <Route path="developer/credentials" element={<Credentials />} />
-          
+
           {/* Settings Routes */}
           <Route path="settings/bank" element={<BankManagement />} />
-          
+
           {/* Generate QR */}
           <Route path="generate-qr" element={<GenerateQR />} />
-          
+
           {/* My Commercials */}
           <Route path="my-commercials" element={<MyCommercials />} />
+
+          {/* Chargebacks */}
+          <Route path="chargebacks" element={<Chargebacks />} />
+          <Route path="chargeback-deductions" element={<ChargebackDeductions />} />
+
+          {/* QR Transactions (conditionally visible in sidebar) */}
+          <Route path="qr-transactions" element={<QRTransactions />} />
         </Route>
-        
+
         {/* Catch all - redirect to home */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

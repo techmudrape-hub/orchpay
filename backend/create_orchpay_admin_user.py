@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
 Create OrchPay Admin User
-Creates admin user with email: admin@orchpay.in
+Creates admin user with admin_id: admin@orchpay.in
 """
 
 import sys
 import os
 from werkzeug.security import generate_password_hash
-import mysql.connector
-from mysql.connector import Error
+import pymysql
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,22 +29,24 @@ except ImportError:
         'host': os.getenv('DB_HOST', 'localhost'),
         'user': os.getenv('DB_USER', 'root'),
         'password': os.getenv('DB_PASSWORD', ''),
-        'database': os.getenv('DB_NAME', 'moneyone_db')
+        'database': os.getenv('DB_NAME', 'orchpay_db')
     }
 
 def create_admin_user():
     """Create admin user in the database"""
     
     # Admin credentials
-    admin_email = "admin@orchpay.in"
+    admin_id = "admin@orchpay.in"
     admin_password = "Admin@123"
-    admin_name = "OrchPay Admin"
+    
+    connection = None
+    cursor = None
     
     try:
         # Connect to database
         print(f"Connecting to database: {DB_CONFIG['database']} at {DB_CONFIG['host']}...")
-        connection = mysql.connector.connect(**DB_CONFIG)
-        cursor = connection.cursor(dictionary=True)
+        connection = pymysql.connect(**DB_CONFIG, cursorclass=pymysql.cursors.DictCursor)
+        cursor = connection.cursor()
         
         # Check if admin_users table exists
         cursor.execute("SHOW TABLES LIKE 'admin_users'")
@@ -54,28 +55,32 @@ def create_admin_user():
             print("Please run the database migration first.")
             return False
         
+        # Check table structure
+        cursor.execute("DESCRIBE admin_users")
+        columns = [row['Field'] for row in cursor.fetchall()]
+        print(f"Table columns: {', '.join(columns)}")
+        
         # Check if admin already exists
-        cursor.execute("SELECT * FROM admin_users WHERE email = %s", (admin_email,))
+        cursor.execute("SELECT * FROM admin_users WHERE admin_id = %s", (admin_id,))
         existing_admin = cursor.fetchone()
         
         if existing_admin:
             print(f"\n⚠️  Admin user already exists!")
-            print(f"Email: {admin_email}")
+            print(f"Admin ID: {admin_id}")
             print(f"ID: {existing_admin['id']}")
-            print(f"Name: {existing_admin['name']}")
             
             response = input("\nDo you want to reset the password? (yes/no): ")
             if response.lower() in ['yes', 'y']:
                 # Update password
                 hashed_password = generate_password_hash(admin_password)
                 cursor.execute(
-                    "UPDATE admin_users SET password = %s WHERE email = %s",
-                    (hashed_password, admin_email)
+                    "UPDATE admin_users SET password_hash = %s WHERE admin_id = %s",
+                    (hashed_password, admin_id)
                 )
                 connection.commit()
                 print(f"\n✅ Password reset successfully!")
                 print(f"\nLogin Credentials:")
-                print(f"Email: {admin_email}")
+                print(f"Admin ID: {admin_id}")
                 print(f"Password: {admin_password}")
                 return True
             else:
@@ -87,53 +92,51 @@ def create_admin_user():
         
         # Insert admin user
         insert_query = """
-            INSERT INTO admin_users (name, email, password, role, status, created_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
+            INSERT INTO admin_users (admin_id, password_hash, is_active, created_at)
+            VALUES (%s, %s, %s, NOW())
         """
         
         cursor.execute(insert_query, (
-            admin_name,
-            admin_email,
+            admin_id,
             hashed_password,
-            'super_admin',
-            'active'
+            1
         ))
         
         connection.commit()
-        admin_id = cursor.lastrowid
+        admin_pk_id = cursor.lastrowid
         
         print(f"\n✅ Admin user created successfully!")
         print(f"\n{'='*50}")
         print(f"Admin User Details:")
         print(f"{'='*50}")
-        print(f"ID: {admin_id}")
-        print(f"Name: {admin_name}")
-        print(f"Email: {admin_email}")
+        print(f"ID: {admin_pk_id}")
+        print(f"Admin ID: {admin_id}")
         print(f"Password: {admin_password}")
-        print(f"Role: super_admin")
         print(f"Status: active")
         print(f"{'='*50}")
         
         print(f"\n📝 Login Instructions:")
         print(f"1. Go to: https://admin.orchpay.in")
-        print(f"2. Email: {admin_email}")
+        print(f"2. Admin ID: {admin_id}")
         print(f"3. Password: {admin_password}")
         print(f"\n⚠️  IMPORTANT: Change this password after first login!")
         
         return True
         
-    except Error as e:
+    except pymysql.Error as e:
         print(f"\n❌ Database Error: {e}")
         return False
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
         
     finally:
-        if 'cursor' in locals():
+        if cursor:
             cursor.close()
-        if 'connection' in locals() and connection.is_connected():
+        if connection:
             connection.close()
             print("\nDatabase connection closed.")
 

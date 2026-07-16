@@ -14,7 +14,7 @@ viyonapay_service = ViyonapayService()
 @viyonapay_bp.route('/create-order', methods=['POST'])
 @jwt_required()
 def create_viyonapay_order():
-    """Create a new VIYONAPAY payment order"""
+    """Create a new VIYONAPAY payment order (TRUAXIS configuration)"""
     try:
         current_merchant = get_jwt_identity()
         data = request.get_json()

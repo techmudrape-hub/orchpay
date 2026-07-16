@@ -117,7 +117,7 @@ export default function PayoutReport() {
         return
       }
 
-      const headers = ['Transaction ID', 'Reference ID', 'Account No', 'Beneficiary Name', 'Bank Name', 'IFSC', 'Date', 'Amount Deducted', 'Charges', 'Net Amount', 'Status', 'UTR', 'Message']
+      const headers = ['Transaction ID', 'Reference ID', 'Order ID', 'Account No', 'Beneficiary Name', 'Bank Name', 'IFSC', 'Date', 'Amount Deducted', 'Charges', 'Net Amount', 'Status', 'UTR', 'Message']
       const rows = data.map(txn => {
         const amount = parseFloat(txn.amount || 0)
         const charges = parseFloat(txn.charge_amount || 0)
@@ -125,6 +125,7 @@ export default function PayoutReport() {
         return [
           txn.txn_id || '-',
           txn.reference_id || '-',
+          txn.order_id || '-',
           txn.account_no || '-',
           txn.bene_name || '-',
           txn.bene_bank || '-',

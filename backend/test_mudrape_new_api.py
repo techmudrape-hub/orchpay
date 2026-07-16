@@ -1,77 +1,174 @@
 #!/usr/bin/env python3
 """
-Test script for new Mudrape Payin API format
-Updated endpoint: /api/api-mudrape/create-order (March 2026)
-Updated parameters: refId, amount, name, mobile, email, userId
+Test script for NEW Mudrape API integration
+Tests the create-intent endpoint directly
 """
 
-import sys
+import requests
+import json
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from dotenv import load_dotenv
 
-from mudrape_service import MudrapeService
-from datetime import datetime
+# Load environment variables
+load_dotenv()
 
-def test_new_payin_api():
-    """Test the new Mudrape payin API with updated format"""
+# Mudrape credentials
+BASE_URL = os.getenv('MUDRAPE_BASE_URL', 'https://agentmudrape.com')
+API_KEY = os.getenv('MUDRAPE_API_KEY')
+API_SECRET = os.getenv('MUDRAPE_API_SECRET')
+USER_ID = os.getenv('MUDRAPE_USER_ID')
+
+print("=" * 80)
+print("MUDRAPE NEW API TEST")
+print("=" * 80)
+print(f"Base URL: {BASE_URL}")
+print(f"User ID: {USER_ID}")
+print(f"API Key: {API_KEY[:20]}..." if API_KEY else "API Key: NOT SET")
+print(f"API Secret: {API_SECRET[:20]}..." if API_SECRET else "API Secret: NOT SET")
+print("=" * 80)
+print()
+
+# Test 1: Create Payment Intent
+print("TEST 1: Create Payment Intent")
+print("-" * 80)
+
+url = f"{BASE_URL}/api/mudrape-payin/create-intent"
+
+headers = {
+    'x-user-id': USER_ID,
+    'x-api-key': API_KEY,
+    'x-api-secret': API_SECRET,
+    'Content-Type': 'application/json'
+}
+
+payload = {
+    'orderId': 'TEST_ORDER_12345',
+    'amount': 100.50,
+    'customerName': 'Test Customer',
+    'customerPhone': '9876543210',
+    'paymentRemark': 'Test Payment'
+}
+
+print(f"URL: {url}")
+print(f"Headers:")
+print(f"  x-user-id: {USER_ID}")
+print(f"  x-api-key: {API_KEY[:20]}...")
+print(f"  x-api-secret: {API_SECRET[:20]}...")
+print(f"  Content-Type: application/json")
+print()
+print(f"Payload:")
+print(json.dumps(payload, indent=2))
+print()
+
+try:
+    response = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=30
+    )
     
-    print("=" * 60)
-    print("Testing NEW Mudrape Payin API Format")
-    print("=" * 60)
+    print(f"Response Status: {response.status_code}")
+    print(f"Response Headers:")
+    for key, value in response.headers.items():
+        print(f"  {key}: {value}")
+    print()
+    print(f"Response Body:")
     
-    service = MudrapeService()
-    
-    # Test merchant ID (use a real one from your database)
-    test_merchant_id = "9000000001"
-    
-    # Test order data
-    order_data = {
-        'amount': '500',
-        'orderid': f'TEST_{datetime.now().strftime("%Y%m%d%H%M%S")}',
-        'payee_fname': 'Test',
-        'payee_lname': 'Customer',
-        'payee_mobile': '8130055250',
-        'payee_email': 'test@mudrape.com',
-        'productinfo': 'Test Payment'
-    }
-    
-    print(f"\n📋 Test Order Details:")
-    print(f"   Merchant ID: {test_merchant_id}")
-    print(f"   Amount: ₹{order_data['amount']}")
-    print(f"   Order ID: {order_data['orderid']}")
-    print(f"   Customer: {order_data['payee_fname']} {order_data['payee_lname']}")
-    print(f"   Mobile: {order_data['payee_mobile']}")
-    print(f"   Email: {order_data['payee_email']}")
-    
-    print(f"\n🔄 Creating payin order with NEW API format...")
-    print(f"   Endpoint: /api/api-mudrape/create-order")
-    print(f"   Fields: refId, amount, name, mobile, email, userId")
-    
-    result = service.create_payin_order(test_merchant_id, order_data)
-    
-    print(f"\n📊 Result:")
-    print(f"   Success: {result.get('success')}")
-    
-    if result.get('success'):
-        print(f"   ✅ Order created successfully!")
-        print(f"   Transaction ID: {result.get('txn_id')}")
-        print(f"   Order ID (refId): {result.get('order_id')}")
-        print(f"   Amount: ₹{result.get('amount')}")
-        print(f"   Charge: ₹{result.get('charge_amount')}")
-        print(f"   Net Amount: ₹{result.get('net_amount')}")
-        print(f"   Mudrape TXN ID: {result.get('mudrape_txn_id')}")
+    try:
+        response_json = response.json()
+        print(json.dumps(response_json, indent=2))
         
-        if result.get('qr_string'):
-            print(f"   QR String: {result.get('qr_string')[:50]}...")
-        
-        if result.get('upi_link'):
-            print(f"   UPI Link: {result.get('upi_link')[:80]}...")
-    else:
-        print(f"   ❌ Order creation failed!")
-        print(f"   Error: {result.get('message')}")
+        if response_json.get('success'):
+            print()
+            print("✅ SUCCESS - Payment intent created!")
+            data = response_json.get('data', {})
+            print(f"  Payin ID: {data.get('payinId')}")
+            print(f"  Payin Reference ID: {data.get('payinReferenceId')}")
+            print(f"  Transaction ID: {data.get('transactionId')}")
+            print(f"  Intent Link: {data.get('intentLink')[:50]}..." if data.get('intentLink') else "  Intent Link: NOT PROVIDED")
+        else:
+            print()
+            print("❌ FAILED - Payment intent creation failed")
+            print(f"  Message: {response_json.get('message')}")
+    except json.JSONDecodeError:
+        print(response.text)
+        print()
+        print("❌ Response is not valid JSON")
     
-    print("\n" + "=" * 60)
-    return result
+except requests.exceptions.RequestException as e:
+    print(f"❌ Request failed: {e}")
 
-if __name__ == "__main__":
-    test_new_payin_api()
+print()
+print("=" * 80)
+
+# Test 2: Check if endpoint exists (try different variations)
+print()
+print("TEST 2: Endpoint Availability Check")
+print("-" * 80)
+
+endpoints_to_test = [
+    '/api/mudrape-payin/create-intent',
+    '/api/mudrape-payin/createIntent',
+    '/api/mudrape/payin/create-intent',
+    '/api/payin/create-intent',
+]
+
+for endpoint in endpoints_to_test:
+    test_url = f"{BASE_URL}{endpoint}"
+    print(f"Testing: {test_url}")
+    
+    try:
+        response = requests.post(
+            test_url,
+            headers=headers,
+            json=payload,
+            timeout=10
+        )
+        print(f"  Status: {response.status_code}")
+        if response.status_code != 404:
+            print(f"  Response: {response.text[:100]}")
+    except Exception as e:
+        print(f"  Error: {e}")
+    print()
+
+print("=" * 80)
+print()
+
+# Test 3: Try with minimal payload
+print("TEST 3: Minimal Payload Test")
+print("-" * 80)
+
+minimal_payload = {
+    'orderId': 'MIN_TEST_123',
+    'amount': 100,
+    'customerName': 'Test',
+    'customerPhone': '9876543210'
+}
+
+print(f"Minimal Payload:")
+print(json.dumps(minimal_payload, indent=2))
+print()
+
+try:
+    response = requests.post(
+        f"{BASE_URL}/api/mudrape-payin/create-intent",
+        headers=headers,
+        json=minimal_payload,
+        timeout=30
+    )
+    
+    print(f"Response Status: {response.status_code}")
+    print(f"Response Body:")
+    try:
+        print(json.dumps(response.json(), indent=2))
+    except:
+        print(response.text)
+    
+except Exception as e:
+    print(f"❌ Request failed: {e}")
+
+print()
+print("=" * 80)
+print("TEST COMPLETE")
+print("=" * 80)

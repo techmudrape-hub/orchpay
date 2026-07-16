@@ -56,6 +56,7 @@ from rang_routes import rang_bp
 from rang_callback_routes import rang_callback_bp
 from viyonapay_routes import viyonapay_bp
 from viyonapay_callback_routes import viyonapay_callback_bp
+from localpaisa_callback_routes import localpaisa_callback_bp
 from service_routing_routes import routing_bp
 from payout_routes import payout_bp
 from payu_webhook_routes import payu_webhook_bp
@@ -89,6 +90,7 @@ app.register_blueprint(tourquest_callback_bp)
 app.register_blueprint(skrillpe_callback_bp)
 app.register_blueprint(rang_callback_bp)
 app.register_blueprint(viyonapay_callback_bp)
+app.register_blueprint(localpaisa_callback_bp)
 
 # Payout routes
 app.register_blueprint(payout_bp)

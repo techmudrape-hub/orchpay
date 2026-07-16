@@ -14,7 +14,7 @@ class AdminAPI {
     };
     
     if (includeAuth) {
-      const token = localStorage.getItem('adminToken');
+      const token = localStorage.getItem('adminToken') || localStorage.getItem('qrAdminToken');
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
@@ -35,10 +35,16 @@ class AdminAPI {
         localStorage.removeItem('adminId');
         localStorage.removeItem('isAuthenticated');
         localStorage.removeItem('adminHasPinSet');
+        localStorage.removeItem('qrAdminToken');
+        localStorage.removeItem('qrAdminId');
         
         // Redirect to login if not already there
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login';
+        if (!window.location.pathname.includes('login')) {
+          if (window.location.pathname.includes('/qrlogin')) {
+            window.location.href = '/qrlogin';
+          } else {
+            window.location.href = '/login';
+          }
         }
         
         throw new Error('Session expired. Please login again.');
@@ -281,7 +287,8 @@ class AdminAPI {
   // Check if user is authenticated
   isAuthenticated() {
     const token = localStorage.getItem('adminToken');
-    return !!token && localStorage.getItem('isAuthenticated') === 'true';
+    const qrToken = localStorage.getItem('qrAdminToken');
+    return (!!token && localStorage.getItem('isAuthenticated') === 'true') || !!qrToken;
   }
 
   // Get current admin ID
@@ -675,6 +682,34 @@ class AdminAPI {
     }
   }
 
+  // Risexpay Auto Success Toggle
+  async getRisexpayAutoSuccess() {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'}/payout/admin/risexpay-auto-success`, {
+        method: 'GET',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get Risexpay auto-success error:', error);
+      throw error;
+    }
+  }
+
+  async toggleRisexpayAutoSuccess(enabled) {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'}/payout/admin/risexpay-auto-success`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify({ enabled }),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Toggle Risexpay auto-success error:', error);
+      throw error;
+    }
+  }
+
   // Payin Transaction APIs
   async getPayinTransactions(params = {}) {
     try {
@@ -743,12 +778,12 @@ class AdminAPI {
     }
   }
 
-  async manualCompletePayin(txnId, action, remarks = '') {
+  async manualCompletePayin(txnId, action, utr = '', remarks = '') {
     try {
       const response = await fetch(`${API_ROOT}/payin/admin/manual-complete/${txnId}`, {
         method: 'POST',
         headers: this.getHeaders(true),
-        body: JSON.stringify({ action, remarks }),
+        body: JSON.stringify({ action, utr, remarks }),
       });
       return await this.handleResponse(response);
     } catch (error) {
@@ -1192,6 +1227,669 @@ class AdminAPI {
       throw error;
     }
   }
+
+  // Manual Reconciliation APIs
+  async searchManualReconTransactions(params) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/manual-reconciliation/search`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(params)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Search manual recon transactions error:', error);
+      throw error;
+    }
+  }
+
+  async markTransactionFailed(data) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/manual-reconciliation/mark-failed`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(data)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Mark transaction failed error:', error);
+      throw error;
+    }
+  }
+
+  async markTransactionSuccess(data) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/manual-reconciliation/mark-success`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(data)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Mark transaction success error:', error);
+      throw error;
+    }
+  }
+
+  async getBulkInitiatedTransactions(params) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/manual-reconciliation/bulk-initiated`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(params)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get bulk initiated transactions error:', error);
+      throw error;
+    }
+  }
+
+  async getManualReconMerchants() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/manual-reconciliation/merchants`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get manual recon merchants error:', error);
+      throw error;
+    }
+  }
+
+  // Auto-Settlement APIs
+  async getAutoSettlementConfig(merchantId) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/config/${merchantId}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get auto-settlement config error:', error);
+      throw error;
+    }
+  }
+
+  async updateAutoSettlementConfig(merchantId, config) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/config/${merchantId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(config)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Update auto-settlement config error:', error);
+      throw error;
+    }
+  }
+
+  async triggerAutoSettlement(merchantId) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/trigger/${merchantId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Trigger auto-settlement error:', error);
+      throw error;
+    }
+  }
+
+  async getAutoSettlementLogs(merchantId, limit = 100) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/logs/${merchantId}?limit=${limit}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get auto-settlement logs error:', error);
+      throw error;
+    }
+  }
+
+  async getAllAutoSettlementLogs(limit = 100) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/logs?limit=${limit}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get all auto-settlement logs error:', error);
+      throw error;
+    }
+  }
+
+  // Chargeback APIs
+  async getChargebackMerchants() {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/merchants`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get chargeback merchants error:', error);
+      throw error;
+    }
+  }
+
+  async uploadChargebackCSV(formData) {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await fetch(`${API_ROOT}/chargeback/admin/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Upload chargeback CSV error:', error);
+      throw error;
+    }
+  }
+
+  async getChargebackUploads(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/admin/uploads${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get chargeback uploads error:', error);
+      throw error;
+    }
+  }
+
+  async getAdminChargebacks(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/admin/chargebacks${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get admin chargebacks error:', error);
+      throw error;
+    }
+  }
+
+  async downloadChargebackTemplate() {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/template`, {
+        method: 'GET',
+        headers: this.getHeaders(false)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to download template');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chargeback_template_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Download chargeback template error:', error);
+      throw error;
+    }
+  }
+
+  async getAdminChargebackStats() {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/stats`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get admin chargeback stats error:', error);
+      throw error;
+    }
+  }
+
+  async getAdminDeductions(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/admin/deductions${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get admin deductions error:', error);
+      throw error;
+    }
+  }
+
+  async getMerchantHolds(merchantId) {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/merchant-holds/${merchantId}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get merchant holds error:', error);
+      throw error;
+    }
+  }
+
+  // Auto-Settlement APIs
+  async getAutoSettlementConfig(merchantId) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/config/${merchantId}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get auto-settlement config error:', error);
+      throw error;
+    }
+  }
+
+  async updateAutoSettlementConfig(merchantId, config) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/config/${merchantId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(config)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Update auto-settlement config error:', error);
+      throw error;
+    }
+  }
+
+  async triggerAutoSettlement(merchantId) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/trigger/${merchantId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Trigger auto-settlement error:', error);
+      throw error;
+    }
+  }
+
+  async getAutoSettlementLogs(merchantId, limit = 100) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/logs/${merchantId}?limit=${limit}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get auto-settlement logs error:', error);
+      throw error;
+    }
+  }
+
+  async getAllAutoSettlementLogs(limit = 100) {
+    try {
+      const response = await fetch(`${API_ROOT}/auto-settlement/logs?limit=${limit}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get all auto-settlement logs error:', error);
+      throw error;
+    }
+  }
+
+  // Chargeback APIs
+  async getChargebackMerchants() {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/merchants`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get chargeback merchants error:', error);
+      throw error;
+    }
+  }
+
+  async uploadChargebackCSV(formData) {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await fetch(`${API_ROOT}/chargeback/admin/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Upload chargeback CSV error:', error);
+      throw error;
+    }
+  }
+
+  async getChargebackUploads(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/admin/uploads${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get chargeback uploads error:', error);
+      throw error;
+    }
+  }
+
+  async getAdminChargebacks(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/admin/chargebacks${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get admin chargebacks error:', error);
+      throw error;
+    }
+  }
+
+  async downloadChargebackTemplate() {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/template`, {
+        method: 'GET',
+        headers: this.getHeaders(false)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to download template');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chargeback_template_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Download chargeback template error:', error);
+      throw error;
+    }
+  }
+
+  async getAdminChargebackStats() {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/stats`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get admin chargeback stats error:', error);
+      throw error;
+    }
+  }
+
+  async getAdminDeductions(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/admin/deductions${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get admin deductions error:', error);
+      throw error;
+    }
+  }
+
+  async getMerchantHolds(merchantId) {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/merchant-holds/${merchantId}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get merchant holds error:', error);
+      throw error;
+    }
+  }
+
+  async updateMerchantHolds(data) {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/admin/merchant-holds`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(data)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Update merchant holds error:', error);
+      throw error;
+    }
+  }
+
+  // User Transaction Summary APIs
+  async getUserTransactionSummaryMerchants() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/user-transaction-summary/merchants`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get user transaction summary merchants error:', error);
+      throw error;
+    }
+  }
+
+  async getUserTransactionSummary(params) {
+    try {
+      const queryParams = new URLSearchParams(params).toString();
+      const response = await fetch(`${API_BASE_URL}/user-transaction-summary/summary?${queryParams}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get user transaction summary error:', error);
+      throw error;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // QR Payment APIs (Admin)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async getQRCodes() {
+    try {
+      const response = await fetch(`${API_ROOT}/qr/admin/qr-codes`, {
+        method: 'GET',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get QR codes error:', error);
+      throw error;
+    }
+  }
+
+  async uploadQRCode(formData) {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await fetch(`${API_ROOT}/qr/admin/qr-codes`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }, // FormData sets its own Content-Type
+        body: formData,
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Upload QR code error:', error);
+      throw error;
+    }
+  }
+
+  async deleteQRCode(qrId) {
+    try {
+      const response = await fetch(`${API_ROOT}/qr/admin/qr-codes/${qrId}`, {
+        method: 'DELETE',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Delete QR code error:', error);
+      throw error;
+    }
+  }
+
+  async getMerchantQRRouting() {
+    try {
+      const response = await fetch(`${API_ROOT}/qr/admin/merchant-routing`, {
+        method: 'GET',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get merchant QR routing error:', error);
+      throw error;
+    }
+  }
+
+  async setMerchantQRRouting(data) {
+    try {
+      const response = await fetch(`${API_ROOT}/qr/admin/merchant-routing`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(data),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Set merchant QR routing error:', error);
+      throw error;
+    }
+  }
+
+  async getQRTransactions(params = {}) {
+    try {
+      const queryString = new URLSearchParams(params).toString();
+      const response = await fetch(`${API_ROOT}/qr/admin/transactions?${queryString}`, {
+        method: 'GET',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get QR transactions error:', error);
+      throw error;
+    }
+  }
+
+  async approveQRTransaction(txnId) {
+    try {
+      const response = await fetch(`${API_ROOT}/qr/admin/approve/${txnId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Approve QR transaction error:', error);
+      throw error;
+    }
+  }
+
+  async rejectQRTransaction(txnId) {
+    try {
+      const response = await fetch(`${API_ROOT}/qr/admin/reject/${txnId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Reject QR transaction error:', error);
+      throw error;
+    }
+  }
+
+  // Risexpay Auto Success Toggle
+  async getRisexpayAutoSuccess(merchantId = null) {
+    try {
+      let url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'}/payout/admin/risexpay-auto-success`;
+      if (merchantId) {
+        url += `?merchant_id=${merchantId}`;
+      }
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: this.getHeaders(true),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get Risexpay auto-success error:', error);
+      throw error;
+    }
+  }
+
+  async toggleRisexpayAutoSuccess(enabled, merchantId = null) {
+    try {
+      const body = { enabled };
+      if (merchantId) {
+        body.merchant_id = merchantId;
+      }
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'}/payout/admin/risexpay-auto-success`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify(body),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Toggle Risexpay auto-success error:', error);
+      throw error;
+    }
+  }
+
+  async completeHdfcJviPayin(txnId, action, utr = '', remarks = '') {
+    try {
+      const response = await fetch(`${API_ROOT}/payin/admin/hdfc-jvi/complete/${txnId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify({ action, utr, remarks }),
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('HDFC JVI complete payin error:', error);
+      throw error;
+    }
+  }
+
 }
 
 // Export singleton instance

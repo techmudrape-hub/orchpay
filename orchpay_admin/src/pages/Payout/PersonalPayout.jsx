@@ -17,6 +17,8 @@ export default function PersonalPayout() {
   const [pgPartner, setPgPartner] = useState('')  // Payment gateway selection
   const [pgPartners, setPgPartners] = useState([])  // Available payment gateways
   const [loadingPartners, setLoadingPartners] = useState(true)
+  const [mobileNumber, setMobileNumber] = useState('')  // Beneficiary mobile number
+  const [emailAddress, setEmailAddress] = useState('')  // Beneficiary email address
 
   useEffect(() => {
     fetchBanks()
@@ -86,6 +88,16 @@ export default function PersonalPayout() {
       toast.error('Please enter a valid amount')
       return
     }
+
+    if (!mobileNumber || mobileNumber.length !== 10) {
+      toast.error('Please enter a valid 10-digit mobile number')
+      return
+    }
+
+    if (!emailAddress || !emailAddress.includes('@')) {
+      toast.error('Please enter a valid email address')
+      return
+    }
     
     if (!tpin || tpin.length !== 6) {
       toast.error('Please enter a valid 6-digit TPIN')
@@ -98,6 +110,8 @@ export default function PersonalPayout() {
       const response = await adminAPI.personalPayout({
         bank_id: selectedBank,
         amount: parseFloat(amount),
+        mobile_number: mobileNumber,
+        email_address: emailAddress,
         tpin: tpin,
         pg_partner: pgPartner  // Use selected payment gateway
       })
@@ -107,6 +121,8 @@ export default function PersonalPayout() {
         // Reset form
         setSelectedBank('')
         setAmount('')
+        setMobileNumber('')
+        setEmailAddress('')
         setTpin('')
       } else {
         toast.error(response.message || 'Payout failed')
@@ -121,6 +137,8 @@ export default function PersonalPayout() {
   const handleReset = () => {
     setSelectedBank('')
     setAmount('')
+    setMobileNumber('')
+    setEmailAddress('')
     setTpin('')
     // Reset to first available partner
     if (pgPartners.length > 0) {
@@ -168,6 +186,33 @@ export default function PersonalPayout() {
                   required
                   min="1"
                   step="0.01"
+                />
+              </div>
+
+              {/* Mobile Number and Email Address */}
+              <div>
+                <Label className="text-base font-medium mb-2 block">Mobile Number</Label>
+                <Input
+                  type="tel"
+                  placeholder="Enter 10-digit mobile number"
+                  value={mobileNumber}
+                  onChange={(e) => setMobileNumber(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  className="h-12 text-base"
+                  required
+                  maxLength="10"
+                  pattern="[0-9]{10}"
+                />
+              </div>
+
+              <div>
+                <Label className="text-base font-medium mb-2 block">Email Address</Label>
+                <Input
+                  type="email"
+                  placeholder="Enter email address"
+                  value={emailAddress}
+                  onChange={(e) => setEmailAddress(e.target.value)}
+                  className="h-12 text-base"
+                  required
                 />
               </div>
 

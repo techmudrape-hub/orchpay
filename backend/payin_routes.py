@@ -10,10 +10,28 @@ from mudrape_service import mudrape_service
 from tourquest_service import tourquest_service
 from vega_service import VegaService
 from airpay_service import airpay_service
+from payu_legalhalt_service import payu_legalhalt_service
 from paytouchpayin_service import PaytouchpayinService
 from skrillpe_service import skrillpe_service
 from rang_service import RangService
 from viyonapay_service import viyonapay_service, viyonapay_barringer_service
+from moneyone_service import moneyone_service
+from instantpesa_service import InstantPesaService
+from maxpe_service import maxpe_service
+from razorpay_service import razorpay_service
+from paytm_service import paytm_service
+from clockspay_service import clockspay_service
+from risexpay_service import risexpay_service
+from sectorpe_service import sectorpe_service
+from oqpay_service import oqpay_service
+from alopna_service import alopna_service
+from nextpay_service import nextpay_service
+from localpaisa_service import localpaisa_service
+from titanexam_service import titanexam_service
+from acceptpay_service import acceptpay_service
+from hdfc_jvi_service import hdfc_jvi_service
+from au_bank_service import au_bank_service
+from oro_service import oro_service
 from database import get_db_connection
 from utils import decrypt_aes, encrypt_aes, validate_api_credentials
 import json
@@ -28,6 +46,7 @@ payin_bp = Blueprint('payin', __name__, url_prefix='/api/payin')
 vega_service = VegaService()
 rang_service = RangService()
 paytouchpayin_service = PaytouchpayinService()
+instantpesa_service = InstantPesaService()
 
 def require_api_credentials(f):
     """
@@ -145,6 +164,9 @@ def create_payin_order():
                 if pg_partner == 'MUDRAPE':
                     # Use Mudrape for payin
                     result = mudrape_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'MONEYONE':
+                    # Use MoneyOne for payin
+                    result = moneyone_service.create_payin_order(current_merchant, order_data)
                 elif pg_partner == 'VEGA':
                     # Use Vega for payin
                     result = vega_service.create_payin_order(current_merchant, order_data)
@@ -169,6 +191,59 @@ def create_payin_order():
                 elif pg_partner == 'VIYONAPAY_BARRINGER':
                     # Use VIYONAPAY for payin (Barringer)
                     result = viyonapay_barringer_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'INSTANTPESA':
+                    # Use InstantPesa for payin
+                    result = instantpesa_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'ACCEPTPAY':
+                    # Use Acceptpay for payin
+                    result = acceptpay_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'MAXPE':
+                    # Use Maxpe for payin
+                    result = maxpe_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'RAZORPAY':
+                    # Use Razorpay for payin
+                    result = razorpay_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'PAYTM':
+                    # Use Paytm for payin
+                    result = paytm_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'CLOCKSPAY':
+                    # Use ClocksPay for payin
+                    result = clockspay_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'RISEXPAY':
+                    # Use Risexpay for payin
+                    result = risexpay_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner in ['PES', 'SECTORPE']:
+                    # Use SectorPe for payin
+                    result = sectorpe_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'OQPAY':
+                    # Use OQPay for payin
+                    result = oqpay_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'ALOPNA':
+                    # Use Alopna for payin
+                    result = alopna_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'NEXTPAY':
+                    # Use Nextpay for payin
+                    result = nextpay_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'LOCALPAISA':
+                    # Use Localpaisa for payin
+                    result = localpaisa_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'TITANEXAM':
+                    # Use Titanexam for payin
+                    result = titanexam_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'PAYU_LEGALHALT':
+                    # Use PayU legalhalt S2S Intent for payin
+                    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+                    device_info = request.headers.get('User-Agent', '')
+                    result = payu_legalhalt_service.create_payin_order(current_merchant, order_data, client_ip, device_info)
+                elif pg_partner == 'HDFC_JVI':
+                    # Use HDFC JVI for payin
+                    result = hdfc_jvi_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'AU_BANK':
+                    # Use AU Bank for payin
+                    result = au_bank_service.create_payin_order(current_merchant, order_data)
+                elif pg_partner == 'ORO':
+                    # Use ORO for payin
+                    result = oro_service.create_payin_order(current_merchant, order_data)
                 else:
                     # Use PayU for payin (default)
                     result = payu_service.create_payin_order(current_merchant, order_data)
@@ -206,6 +281,25 @@ def create_payin_order():
                     upi_link = ''
                     intent_url = ''
                     payment_link = result.get('redirect_url', payment_link_value)
+                elif pg_partner == 'INSTANTPESA':
+                    # InstantPesa returns only upi_link
+                    upi_link = result.get('upi_link', '')
+                    intent_url = ''
+                    payment_link = ''
+                elif pg_partner == 'ACCEPTPAY':
+                    # Acceptpay returns paymentLink
+                    upi_link = result.get('payment_link', '')
+                    intent_url = result.get('payment_link', '')
+                    payment_link = result.get('payment_link', '')
+                    result['vpa'] = upi_link
+                elif pg_partner == 'LOCALPAISA':
+                    upi_link = result.get('upi_link', '')
+                    intent_url = upi_link
+                    payment_link = payment_url_value
+                    # Copy upi_link to all other link/QR parameters
+                    result['qr_string'] = upi_link
+                    result['qr_code_url'] = upi_link
+                    result['vpa'] = upi_link
                 else:
                     upi_link = result.get('upi_link', '')
                     intent_url = result.get('intent_url', '')
@@ -746,6 +840,254 @@ def verify_payment():
                                 txn['payment_mode'] = payment_mode
                                 
                                 print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
+
+                    elif pg_partner == 'NEXTPAY':
+                        # Check status from Nextpay using txn_id
+                        status_result = nextpay_service.check_payment_status(txn['pg_txn_id'])
+                        
+                        if status_result.get('success'):
+                            new_status = status_result.get('status', 'INITIATED')
+                            utr = status_result.get('utr')
+                            pg_txn_id = status_result.get('txnId')
+                            payment_mode = 'UPI'
+                            
+                            print(f"Nextpay Status Result: Status={new_status}, UTR={utr}")
+                            
+                            # Update transaction if status changed
+                            if new_status != txn['status']:
+                                if new_status == 'SUCCESS':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                    
+                                    # Check if wallet already credited (idempotency)
+                                    cursor.execute("""
+                                        SELECT COUNT(*) as count FROM merchant_wallet_transactions
+                                        WHERE reference_id = %s AND txn_type = 'UNSETTLED_CREDIT'
+                                    """, (txn['txn_id'],))
+                                    
+                                    wallet_already_credited = cursor.fetchone()['count'] > 0
+                                    
+                                    if not wallet_already_credited:
+                                        # Credit merchant unsettled wallet with net amount
+                                        from wallet_service import wallet_service as wallet_svc
+                                        wallet_result = wallet_svc.credit_unsettled_wallet(
+                                            merchant_id=current_merchant,
+                                            amount=float(txn['net_amount']),
+                                            description=f"PayIn received (Nextpay) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+                                        
+                                        if wallet_result['success']:
+                                            print(f"✓ Merchant unsettled wallet credited: ₹{txn['net_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit merchant unsettled wallet: {wallet_result.get('message')}")
+                                        
+                                        # Credit admin unsettled wallet with charge amount
+                                        admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                                            admin_id='admin',
+                                            amount=float(txn['charge_amount']),
+                                            description=f"PayIn charge (Nextpay) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+                                        
+                                        if admin_wallet_result['success']:
+                                            print(f"✓ Admin unsettled wallet credited: ₹{txn['charge_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit admin unsettled wallet: {admin_wallet_result.get('message')}")
+                                    else:
+                                        print(f"⚠ Wallet already credited for this transaction - skipping")
+                                    
+                                elif new_status == 'FAILED':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                else:
+                                    # Still pending/initiated
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                
+                                conn.commit()
+                                
+                                # Update txn dict with new values
+                                txn['status'] = new_status
+                                txn['bank_ref_no'] = utr
+                                txn['pg_txn_id'] = pg_txn_id
+                                txn['payment_mode'] = payment_mode
+                                
+                                print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
+                    
+                    elif pg_partner == 'LOCALPAISA':
+                        # Check status from Localpaisa using txn_id
+                        status_result = localpaisa_service.check_payment_status(txn['pg_txn_id'])
+                        
+                        if status_result.get('success'):
+                            new_status = status_result.get('status', 'INITIATED')
+                            utr = status_result.get('utr')
+                            pg_txn_id = status_result.get('txnId')
+                            payment_mode = 'UPI'
+                            
+                            print(f"Localpaisa Status Result: Status={new_status}, UTR={utr}")
+                            
+                            # Update transaction if status changed
+                            if new_status != txn['status']:
+                                if new_status == 'SUCCESS':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                    
+                                    # Check if wallet already credited (idempotency)
+                                    cursor.execute("""
+                                        SELECT COUNT(*) as count FROM merchant_wallet_transactions
+                                        WHERE reference_id = %s AND txn_type = 'UNSETTLED_CREDIT'
+                                    """, (txn['txn_id'],))
+                                    
+                                    wallet_already_credited = cursor.fetchone()['count'] > 0
+                                    
+                                    if not wallet_already_credited:
+                                        # Credit merchant unsettled wallet with net amount
+                                        from wallet_service import wallet_service as wallet_svc
+                                        wallet_result = wallet_svc.credit_unsettled_wallet(
+                                            merchant_id=current_merchant,
+                                            amount=float(txn['net_amount']),
+                                            description=f"PayIn received (Localpaisa) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+                                        
+                                        if wallet_result['success']:
+                                            print(f"✓ Merchant unsettled wallet credited: ₹{txn['net_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit merchant unsettled wallet: {wallet_result.get('message')}")
+                                        
+                                        # Credit admin unsettled wallet with charge amount
+                                        admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                                            admin_id='admin',
+                                            amount=float(txn['charge_amount']),
+                                            description=f"PayIn charge (Localpaisa) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+                                        
+                                        if admin_wallet_result['success']:
+                                            print(f"✓ Admin unsettled wallet credited: ₹{txn['charge_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit admin unsettled wallet: {admin_wallet_result.get('message')}")
+                                    else:
+                                        print(f"⚠ Wallet already credited for this transaction - skipping")
+                                    
+                                elif new_status == 'FAILED':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                else:
+                                    # Still pending/initiated
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                
+                                conn.commit()
+                                
+                                # Update txn dict with new values
+                                txn['status'] = new_status
+                                txn['bank_ref_no'] = utr
+                                txn['pg_txn_id'] = pg_txn_id
+                                txn['payment_mode'] = payment_mode
+                                
+                                print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
+                    
+                    elif pg_partner == 'MONEYONE':
+                        # Check status from MoneyOne using order_id
+                        status_result = moneyone_service.check_payment_status(txn['order_id'])
+                        
+                        if status_result.get('success'):
+                            new_status = status_result.get('status', 'INITIATED')
+                            utr = status_result.get('utr')
+                            pg_txn_id = status_result.get('txnId')
+                            payment_mode = status_result.get('payment_mode', 'UPI')
+                            
+                            print(f"MoneyOne Status Result: Status={new_status}, UTR={utr}")
+                            
+                            # Update transaction if status changed
+                            if new_status != txn['status']:
+                                if new_status == 'SUCCESS':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                    
+                                    # Check if wallet already credited
+                                    cursor.execute("""
+                                        SELECT COUNT(*) as count FROM merchant_wallet_transactions
+                                        WHERE reference_id = %s AND txn_type = 'UNSETTLED_CREDIT'
+                                    """, (txn['txn_id'],))
+                                    
+                                    wallet_already_credited = cursor.fetchone()['count'] > 0
+                                    
+                                    if not wallet_already_credited:
+                                        from wallet_service import wallet_service as wallet_svc
+                                        wallet_result = wallet_svc.credit_unsettled_wallet(
+                                            merchant_id=current_merchant,
+                                            amount=float(txn['net_amount']),
+                                            description=f"PayIn received (MoneyOne) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+                                        
+                                        if wallet_result['success']:
+                                            print(f"✓ Merchant unsettled wallet credited: ₹{txn['net_amount']}")
+                                        
+                                        admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                                            admin_id='admin',
+                                            amount=float(txn['charge_amount']),
+                                            description=f"PayIn charge (MoneyOne) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+                                        
+                                        if admin_wallet_result['success']:
+                                            print(f"✓ Admin unsettled wallet credited: ₹{txn['charge_amount']}")
+                                    else:
+                                        print(f"⚠ Wallet already credited for this transaction - skipping")
+                                    
+                                elif new_status == 'FAILED':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, pg_txn_id = %s, payment_mode = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, pg_txn_id, payment_mode, txn['txn_id']))
+                                
+                                conn.commit()
+                                
+                                # Update txn dict with new values
+                                txn['status'] = new_status
+                                txn['bank_ref_no'] = utr
+                                txn['pg_txn_id'] = pg_txn_id
+                                txn['payment_mode'] = payment_mode
+                                
+                                print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
                     
                     elif pg_partner == 'VIYONAPAY':
                         # Check status from VIYONAPAY using order_id (Truaxis)
@@ -836,11 +1178,248 @@ def verify_payment():
                                 
                                 print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
                     
+                    elif pg_partner in ['PES', 'SECTORPE']:
+                        # Check status from SectorPe using order_id (txnid)
+                        status_result = sectorpe_service.check_payment_status(txn['order_id'])
+
+                        if status_result.get('success'):
+                            new_status = status_result.get('status', 'INITIATED')
+                            utr = status_result.get('utr', '')
+                            payment_mode = 'UPI'
+
+                            print(f"SectorPe Status Result: Status={new_status}, UTR={utr}")
+
+                            if new_status != txn['status']:
+                                if new_status == 'SUCCESS':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+
+                                    # Idempotency check
+                                    cursor.execute("""
+                                        SELECT COUNT(*) as count FROM merchant_wallet_transactions
+                                        WHERE reference_id = %s AND txn_type = 'UNSETTLED_CREDIT'
+                                    """, (txn['txn_id'],))
+
+                                    wallet_already_credited = cursor.fetchone()['count'] > 0
+
+                                    if not wallet_already_credited:
+                                        from wallet_service import wallet_service as wallet_svc
+                                        wallet_result = wallet_svc.credit_unsettled_wallet(
+                                            merchant_id=current_merchant,
+                                            amount=float(txn['net_amount']),
+                                            description=f"PayIn received (SectorPe) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+
+                                        if wallet_result['success']:
+                                            print(f"✓ Merchant unsettled wallet credited: ₹{txn['net_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit merchant unsettled wallet: {wallet_result.get('message')}")
+
+                                        admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                                            admin_id='admin',
+                                            amount=float(txn['charge_amount']),
+                                            description=f"PayIn charge (SectorPe) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+
+                                        if admin_wallet_result['success']:
+                                            print(f"✓ Admin unsettled wallet credited: ₹{txn['charge_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit admin unsettled wallet: {admin_wallet_result.get('message')}")
+                                    else:
+                                        print(f"⚠ Wallet already credited for this transaction - skipping")
+
+                                elif new_status == 'FAILED':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+
+                                conn.commit()
+
+                                txn['status'] = new_status
+                                txn['bank_ref_no'] = utr
+                                txn['payment_mode'] = payment_mode
+
+                                print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
+
+                    elif pg_partner == 'OQPAY':
+                        # Check status from OQPay
+                        status_result = oqpay_service.check_payment_status(txn['pg_txn_id'])
+
+                        if status_result.get('success'):
+                            new_status = status_result.get('status', 'INITIATED')
+                            utr = status_result.get('utr', '')
+                            payment_mode = 'UPI'
+
+                            print(f"OQPay Status Result: Status={new_status}, UTR={utr}")
+
+                            if new_status != txn['status']:
+                                if new_status == 'SUCCESS':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+
+                                    # Idempotency check
+                                    cursor.execute("""
+                                        SELECT COUNT(*) as count FROM merchant_wallet_transactions
+                                        WHERE reference_id = %s AND txn_type = 'UNSETTLED_CREDIT'
+                                    """, (txn['txn_id'],))
+
+                                    wallet_already_credited = cursor.fetchone()['count'] > 0
+
+                                    if not wallet_already_credited:
+                                        from wallet_service import wallet_service as wallet_svc
+                                        wallet_result = wallet_svc.credit_unsettled_wallet(
+                                            merchant_id=current_merchant,
+                                            amount=float(txn['net_amount']),
+                                            description=f"PayIn received (OQPay status verification) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+
+                                        if wallet_result['success']:
+                                            print(f"✓ Merchant unsettled wallet credited: ₹{txn['net_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit merchant unsettled wallet: {wallet_result.get('message')}")
+
+                                        admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                                            admin_id='admin',
+                                            amount=float(txn['charge_amount']),
+                                            description=f"PayIn charge (OQPay status verification) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+
+                                        if admin_wallet_result['success']:
+                                            print(f"✓ Admin unsettled wallet credited: ₹{txn['charge_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit admin wallet: {admin_wallet_result.get('message')}")
+                                    else:
+                                        print(f"⚠ Wallet already credited for this transaction - skipping")
+
+                                elif new_status == 'FAILED':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+
+                                conn.commit()
+
+                                txn['status'] = new_status
+                                txn['bank_ref_no'] = utr
+                                txn['payment_mode'] = payment_mode
+
+                                print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
+
                     elif pg_partner == 'PAYU':
                         # Check status from PayU
-                        status_result = payu_service.check_transaction_status(txn['txn_id'])
+                        status_result = payu_service.get_transaction_status(txn['txn_id'])
                         if status_result:
                             txn = status_result
+                            
+                    elif pg_partner == 'PAYU_LEGALHALT':
+                        # Check status from PayU legalhalt
+                        status_result = payu_legalhalt_service.check_payment_status(txn['txn_id'])
+
+                        if status_result.get('success'):
+                            new_status = status_result.get('status', 'INITIATED')
+                            utr = status_result.get('utr', '')
+                            payment_mode = status_result.get('payment_mode', 'UPI')
+
+                            print(f"PayU legalhalt Status Result: Status={new_status}, UTR={utr}")
+
+                            if new_status != txn['status']:
+                                if new_status == 'SUCCESS':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+
+                                    # Idempotency check
+                                    cursor.execute("""
+                                        SELECT COUNT(*) as count FROM merchant_wallet_transactions
+                                        WHERE reference_id = %s AND txn_type = 'UNSETTLED_CREDIT'
+                                    """, (txn['txn_id'],))
+
+                                    wallet_already_credited = cursor.fetchone()['count'] > 0
+
+                                    if not wallet_already_credited:
+                                        from wallet_service import wallet_service as wallet_svc
+                                        wallet_result = wallet_svc.credit_unsettled_wallet(
+                                            merchant_id=current_merchant,
+                                            amount=float(txn['net_amount']),
+                                            description=f"PayIn received (PayU legalhalt verification) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+
+                                        if wallet_result['success']:
+                                            print(f"✓ Merchant unsettled wallet credited: ₹{txn['net_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit merchant unsettled wallet: {wallet_result.get('message')}")
+
+                                        admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                                            admin_id='admin',
+                                            amount=float(txn['charge_amount']),
+                                            description=f"PayIn charge (PayU legalhalt verification) - {txn['order_id']}",
+                                            reference_id=txn['txn_id']
+                                        )
+
+                                        if admin_wallet_result['success']:
+                                            print(f"✓ Admin unsettled wallet credited: ₹{txn['charge_amount']}")
+                                        else:
+                                            print(f"✗ Failed to credit admin wallet: {admin_wallet_result.get('message')}")
+                                    else:
+                                        print(f"⚠ Wallet already credited for this transaction - skipping")
+
+                                elif new_status == 'FAILED':
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payin_transactions
+                                        SET status = %s, bank_ref_no = %s, payment_mode = %s,
+                                            updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (new_status, utr, payment_mode, txn['txn_id']))
+
+                                conn.commit()
+
+                                txn['status'] = new_status
+                                txn['bank_ref_no'] = utr
+                                txn['payment_mode'] = payment_mode
+
+                                print(f"✓ Updated transaction {txn['txn_id']} to {new_status}")
                 
                 # Prepare response
                 response_data = {
@@ -1172,10 +1751,11 @@ def admin_get_all_payin_transactions():
         
         try:
             with conn.cursor() as cursor:
-                # Check if user is admin
-                cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
-                if not cursor.fetchone():
-                    return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+                # Check if user is admin or QR admin
+                if current_admin != 'qr_admin_special':
+                    cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
                 
                 # Get query parameters
                 page = int(request.args.get('page', 1))
@@ -1322,10 +1902,11 @@ def admin_get_all_payin_transactions_download():
         
         try:
             with conn.cursor() as cursor:
-                # Check if user is admin
-                cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
-                if not cursor.fetchone():
-                    return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+                # Check if user is admin or QR admin
+                if current_admin != 'qr_admin_special':
+                    cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
                 
                 # Get query parameters
                 status = request.args.get('status')
@@ -1420,10 +2001,11 @@ def admin_get_today_payin_transactions():
         
         try:
             with conn.cursor() as cursor:
-                # Check if user is admin
-                cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
-                if not cursor.fetchone():
-                    return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+                # Check if user is admin or QR admin
+                if current_admin != 'qr_admin_special':
+                    cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
                 
                 # Get ALL transactions for today (no pagination)
                 query = """
@@ -1474,9 +2056,11 @@ def admin_get_pending_payin():
         
         try:
             with conn.cursor() as cursor:
-                # Check if user is admin
-                cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
-                if not cursor.fetchone():
+                # Check if user is admin or QR admin
+                if current_admin != 'qr_admin_special':
+                    cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
                     return jsonify({'success': False, 'message': 'Unauthorized'}), 403
                 
                 # Get pending transactions
@@ -1523,10 +2107,11 @@ def admin_check_payin_status(txn_id):
         
         try:
             with conn.cursor() as cursor:
-                # Check if user is admin
-                cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
-                if not cursor.fetchone():
-                    return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+                # Check if user is admin or QR admin
+                if current_admin != 'qr_admin_special':
+                    cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
                 
                 # Get transaction details
                 cursor.execute("""
@@ -1835,6 +2420,104 @@ def admin_check_payin_status(txn_id):
                         else:
                             print(f"Failed to check VIYONAPAY_BARRINGER status: {status_result.get('message')}")
                 
+                elif txn['status'] in ['INITIATED', 'PENDING'] and pg_partner == 'LOCALPAISA':
+                    print(f"Admin checking LOCALPAISA status for {txn_id}")
+                    
+                    pg_txn_id = txn.get('pg_txn_id')
+                    
+                    if pg_txn_id:
+                        print(f"Checking LOCALPAISA with txn_id: {pg_txn_id}")
+                        status_result = localpaisa_service.check_payment_status(pg_txn_id)
+                        
+                        if status_result.get('success'):
+                            localpaisa_status = status_result.get('status', '').upper()
+                            print(f"LOCALPAISA returned status: {localpaisa_status}")
+                            
+                            # Update database if status changed
+                            if localpaisa_status == 'SUCCESS' and txn['status'] != 'SUCCESS':
+                                print(f"Updating {txn_id} to SUCCESS")
+                                
+                                # Update transaction
+                                cursor.execute("""
+                                    UPDATE payin_transactions
+                                    SET status = 'SUCCESS',
+                                        bank_ref_no = %s,
+                                        pg_txn_id = %s,
+                                        payment_mode = %s,
+                                        completed_at = NOW(),
+                                        updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (
+                                    status_result.get('utr'),
+                                    status_result.get('txnId'),
+                                    status_result.get('payment_mode', 'UPI'),
+                                    txn_id
+                                ))
+                                
+                                # Credit merchant unsettled wallet with net amount
+                                from wallet_service import wallet_service as wallet_svc
+                                net_amount = float(txn['net_amount'])
+                                charge_amount = float(txn['charge_amount'])
+                                
+                                wallet_result = wallet_svc.credit_unsettled_wallet(
+                                    merchant_id=txn['merchant_id'],
+                                    amount=net_amount,
+                                    description=f"PayIn received (LOCALPAISA Admin Check) - {txn.get('order_id')}",
+                                    reference_id=txn_id
+                                )
+                                
+                                if wallet_result['success']:
+                                    print(f"✓ Merchant unsettled wallet credited: ₹{net_amount}")
+                                else:
+                                    print(f"✗ Failed to credit merchant unsettled wallet: {wallet_result.get('message')}")
+                                
+                                # Credit admin unsettled wallet with charge amount
+                                admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                                    admin_id='admin',
+                                    amount=charge_amount,
+                                    description=f"PayIn charge (LOCALPAISA Admin Check) - {txn.get('order_id')}",
+                                    reference_id=txn_id
+                                )
+                                
+                                if admin_wallet_result['success']:
+                                    print(f"✓ Admin unsettled wallet credited: ₹{charge_amount}")
+                                else:
+                                    print(f"✗ Failed to credit admin unsettled wallet: {admin_wallet_result.get('message')}")
+                                
+                                conn.commit()
+                                
+                                # Update txn dict
+                                txn['status'] = 'SUCCESS'
+                                txn['bank_ref_no'] = status_result.get('utr')
+                                txn['pg_txn_id'] = status_result.get('txnId')
+                                txn['payment_mode'] = status_result.get('payment_mode', 'UPI')
+                                
+                                print(f"✓ Updated {txn_id} to SUCCESS and credited wallet")
+                            
+                            elif localpaisa_status in ['FAILED', 'FAILURE'] and txn['status'] != 'FAILED':
+                                print(f"Updating {txn_id} to FAILED")
+                                
+                                cursor.execute("""
+                                    UPDATE payin_transactions
+                                    SET status = 'FAILED',
+                                        pg_txn_id = %s,
+                                        completed_at = NOW(),
+                                        updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (
+                                    status_result.get('txnId'),
+                                    txn_id
+                                ))
+                                
+                                conn.commit()
+                                
+                                txn['status'] = 'FAILED'
+                                txn['pg_txn_id'] = status_result.get('txnId')
+                                
+                                print(f"✓ Updated {txn_id} to FAILED")
+                        else:
+                            print(f"Failed to check LOCALPAISA status: {status_result.get('message')}")
+                
                 # Format data
                 if txn.get('created_at'):
                     txn['created_at'] = txn['created_at'].isoformat()
@@ -1858,122 +2541,7 @@ def admin_check_payin_status(txn_id):
         traceback.print_exc()
         return jsonify({'success': False, 'message': 'Internal server error'}), 500
 
-@payin_bp.route('/admin/manual-complete/<txn_id>', methods=['POST'])
-@jwt_required()
-def admin_manual_complete_payin(txn_id):
-    """Manually complete payin transaction (admin only)"""
-    try:
-        current_admin = get_jwt_identity()
-        data = request.get_json()
-        
-        action = data.get('action')  # 'success' or 'failed'
-        remarks = data.get('remarks', '')
-        
-        if action not in ['success', 'failed']:
-            return jsonify({'success': False, 'message': 'Invalid action'}), 400
-        
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({'success': False, 'message': 'Database connection failed'}), 500
-        
-        try:
-            with conn.cursor() as cursor:
-                # Check if user is admin
-                cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
-                if not cursor.fetchone():
-                    return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-                
-                # Get transaction details
-                cursor.execute("""
-                    SELECT * FROM payin_transactions WHERE txn_id = %s
-                """, (txn_id,))
-                
-                txn = cursor.fetchone()
-                
-                if not txn:
-                    return jsonify({'success': False, 'message': 'Transaction not found'}), 404
-                
-                if txn['status'] not in ['INITIATED', 'PENDING']:
-                    return jsonify({'success': False, 'message': 'Transaction already processed'}), 400
-                
-                if action == 'success':
-                    # Update transaction to SUCCESS
-                    cursor.execute("""
-                        UPDATE payin_transactions
-                        SET status = 'SUCCESS',
-                            pg_txn_id = %s,
-                            bank_ref_no = %s,
-                            payment_mode = 'MANUAL',
-                            completed_at = NOW(),
-                            updated_at = NOW(),
-                            remarks = %s
-                        WHERE txn_id = %s
-                    """, (f'MANUAL_{txn_id[-10:]}', f'ADMIN_{txn_id[-8:]}', remarks, txn_id))
-                    
-                    # Credit merchant unsettled wallet with net amount
-                    from wallet_service import wallet_service as wallet_svc
-                    wallet_result = wallet_svc.credit_unsettled_wallet(
-                        merchant_id=txn['merchant_id'],
-                        amount=float(txn['net_amount']),
-                        description=f"PayIn received (Manual) - {txn_id}. {remarks}",
-                        reference_id=txn_id
-                    )
-                    
-                    if not wallet_result['success']:
-                        conn.rollback()
-                        return jsonify({
-                            'success': False,
-                            'message': f"Failed to credit merchant wallet: {wallet_result.get('message')}"
-                        }), 500
-                    
-                    # Credit admin unsettled wallet with charge amount
-                    admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
-                        admin_id='admin',
-                        amount=float(txn['charge_amount']),
-                        description=f"PayIn charge (Manual) - {txn_id}",
-                        reference_id=txn_id
-                    )
-                    
-                    if not admin_wallet_result['success']:
-                        conn.rollback()
-                        return jsonify({
-                            'success': False,
-                            'message': f"Failed to credit admin wallet: {admin_wallet_result.get('message')}"
-                        }), 500
-                    
-                    conn.commit()
-                    
-                    return jsonify({
-                        'success': True,
-                        'message': 'Transaction completed successfully',
-                        'status': 'SUCCESS'
-                    }), 200
-                    
-                else:  # action == 'failed'
-                    # Update transaction to FAILED
-                    cursor.execute("""
-                        UPDATE payin_transactions
-                        SET status = 'FAILED',
-                            error_message = %s,
-                            updated_at = NOW(),
-                            remarks = %s
-                        WHERE txn_id = %s
-                    """, ('Manually marked as failed by admin', remarks, txn_id))
-                    
-                    conn.commit()
-                    
-                    return jsonify({
-                        'success': True,
-                        'message': 'Transaction marked as failed',
-                        'status': 'FAILED'
-                    }), 200
-                
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        print(f"Admin manual complete payin error: {e}")
-        return jsonify({'success': False, 'message': 'Internal server error'}), 500
+
 
 @payin_bp.route('/stats', methods=['GET'])
 @jwt_required()
@@ -2366,3 +2934,133 @@ def admin_create_invoice(txn_id):
             cursor.close()
         if conn:
             conn.close()
+
+@payin_bp.route('/admin/manual-complete/<txn_id>', methods=['POST'])
+@jwt_required()
+def admin_manual_complete_payin(txn_id):
+    """Manually complete payin transaction (admin only)"""
+    try:
+        current_admin = get_jwt_identity()
+        data = request.get_json()
+        
+        action = data.get('action')  # 'success' or 'failed'
+        utr = data.get('utr', '')
+        remarks = data.get('remarks', '')
+        
+        if action not in ['success', 'failed']:
+            return jsonify({'success': False, 'message': 'Invalid action'}), 400
+            
+        if action == 'success' and not utr:
+            return jsonify({'success': False, 'message': 'UTR is required for success'}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'success': False, 'message': 'Database connection failed'}), 500
+        
+        try:
+            with conn.cursor() as cursor:
+                # Check if user is admin or QR admin
+                if current_admin != 'qr_admin_special':
+                    cursor.execute("SELECT admin_id FROM admin_users WHERE admin_id = %s", (current_admin,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+                
+                # Get transaction details
+                cursor.execute("""
+                    SELECT * FROM payin_transactions WHERE txn_id = %s
+                """, (txn_id,))
+                
+                txn = cursor.fetchone()
+                
+                if not txn:
+                    return jsonify({'success': False, 'message': 'Transaction not found'}), 404
+                
+                if txn['status'] not in ['INITIATED', 'PENDING']:
+                    return jsonify({'success': False, 'message': 'Transaction already processed'}), 400
+                
+                if action == 'success':
+                    # Update transaction to SUCCESS
+                    cursor.execute("""
+                        UPDATE payin_transactions
+                        SET status = 'SUCCESS',
+                            bank_ref_no = %s,
+                            payment_mode = 'UPI',
+                            completed_at = NOW(),
+                            updated_at = NOW(),
+                            remarks = %s
+                        WHERE txn_id = %s
+                    """, (utr, remarks, txn_id))
+                    
+                    # Credit merchant unsettled wallet with net amount
+                    from wallet_service import wallet_service as wallet_svc
+                    wallet_result = wallet_svc.credit_unsettled_wallet(
+                        merchant_id=txn['merchant_id'],
+                        amount=float(txn['net_amount']),
+                        description=f"PayIn received ({txn.get('pg_partner', 'Manual')}) - {txn['order_id']}. {remarks}",
+                        reference_id=txn_id
+                    )
+                    
+                    if not wallet_result['success']:
+                        conn.rollback()
+                        return jsonify({
+                            'success': False,
+                            'message': f"Failed to credit merchant wallet: {wallet_result.get('message')}"
+                        }), 500
+                    
+                    # Credit admin unsettled wallet with charge amount
+                    admin_wallet_result = wallet_svc.credit_admin_unsettled_wallet(
+                        admin_id=current_admin,
+                        amount=float(txn['charge_amount']),
+                        description=f"PayIn charge ({txn.get('pg_partner', 'Manual')}) - {txn['order_id']}",
+                        reference_id=txn_id
+                    )
+                    
+                    if not admin_wallet_result['success']:
+                        conn.rollback()
+                        return jsonify({
+                            'success': False,
+                            'message': f"Failed to credit admin wallet: {admin_wallet_result.get('message')}"
+                        }), 500
+                    
+                    conn.commit()
+                    
+                    # Send callback
+                    from manual_callback_trigger import send_callback
+                    send_callback(txn_id=txn_id)
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': 'Transaction marked as SUCCESS and callback sent',
+                        'status': 'SUCCESS'
+                    }), 200
+                    
+                else:  # action == 'failed'
+                    # Update transaction to FAILED
+                    cursor.execute("""
+                        UPDATE payin_transactions
+                        SET status = 'FAILED',
+                            error_message = %s,
+                            updated_at = NOW(),
+                            remarks = %s
+                        WHERE txn_id = %s
+                    """, ('Marked as failed by admin (No UTR)', remarks, txn_id))
+                    
+                    conn.commit()
+                    
+                    # Send callback
+                    from manual_callback_trigger import send_callback
+                    send_callback(txn_id=txn_id)
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': 'Transaction marked as FAILED and callback sent',
+                        'status': 'FAILED'
+                    }), 200
+                
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        print(f"Admin manual complete payin error: {e}")
+        return jsonify({'success': False, 'message': 'Internal server error'}), 500
+

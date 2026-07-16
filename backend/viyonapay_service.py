@@ -599,6 +599,18 @@ class ViyonapayService:
                     payment_url = response_body.get('payment_url') or response_body.get('upiIntentUrl')
                     status = response_body.get('status', 'PENDING')
                     
+                    # IMPORTANT: ViyonaPay generates their own orderId which they send in callbacks
+                    # We need to store THEIR orderId, not ours
+                    viyonapay_order_id = response_body.get('orderId') or response_body.get('order_id')
+                    
+                    # If ViyonaPay doesn't return an orderId, use the one we sent
+                    # But log a warning as this might cause callback issues
+                    if not viyonapay_order_id:
+                        viyonapay_order_id = order_data.get('orderid')
+                        print(f"⚠️  ViyonaPay didn't return orderId, using our orderid: {viyonapay_order_id}")
+                    else:
+                        print(f"✓ ViyonaPay returned orderId: {viyonapay_order_id}")
+                    
                     # Insert transaction into database
                     # Extract callback_url from order_data if provided
                     # Support both 'callback_url' and 'callbackurl' formats
@@ -616,7 +628,7 @@ class ViyonapayService:
                     """, (
                         txn_id,
                         merchant_id,
-                        order_data.get('orderid'),
+                        viyonapay_order_id,  # Use ViyonaPay's orderId here
                         amount,
                         charge_amount,
                         net_amount,
@@ -636,12 +648,13 @@ class ViyonapayService:
                     
                     print(f"✅ Payment intent created successfully")
                     print(f"  Intent ID: {payment_intent_id}")
+                    print(f"  ViyonaPay Order ID: {viyonapay_order_id}")
                     print(f"  Payment URL: {payment_url}")
                     
                     return {
                         'success': True,
                         'txn_id': txn_id,
-                        'order_id': order_data.get('orderid'),
+                        'order_id': viyonapay_order_id,  # Return ViyonaPay's orderId
                         'amount': amount,
                         'charge_amount': charge_amount,
                         'net_amount': net_amount,

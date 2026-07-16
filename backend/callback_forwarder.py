@@ -23,6 +23,80 @@ def forward_payout_callback(txn_id, merchant_id, callback_url, callback_data):
     """
     if not callback_url:
         return {'success': False, 'message': 'No callback URL provided'}
+
+def forward_callback_to_merchant(merchant_id, callback_url, payload, txn_id, provider=None):
+    """
+    Forward callback to merchant's callback URL
+    """
+    if not callback_url:
+        return {'success': False, 'message': 'No callback URL provided'}
+    
+    print(f"📤 Forwarding {provider or ''} callback to: {callback_url}")
+    print(f"Callback data: {json.dumps(payload, indent=2)}")
+    
+    conn = get_db_connection()
+    
+    try:
+        response = requests.post(
+            callback_url,
+            json=payload,
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        
+        print(f"✅ Callback response: {response.status_code}")
+        
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO callback_logs 
+                        (merchant_id, txn_id, callback_url, request_data, response_code, response_data, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """, (
+                        merchant_id,
+                        txn_id,
+                        callback_url,
+                        json.dumps(payload),
+                        response.status_code,
+                        response.text[:1000]
+                    ))
+                    conn.commit()
+            except Exception as log_error:
+                print(f"⚠️  Failed to log callback: {log_error}")
+        
+        return {
+            'success': True,
+            'status_code': response.status_code,
+            'response': response.text[:500]
+        }
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Callback request failed: {error_msg}")
+        
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO callback_logs 
+                        (merchant_id, txn_id, callback_url, request_data, response_code, response_data, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """, (
+                        merchant_id,
+                        txn_id,
+                        callback_url,
+                        json.dumps(payload),
+                        0,
+                        error_msg[:1000]
+                    ))
+                    conn.commit()
+            except Exception as log_error:
+                print(f"⚠️  Failed to log callback: {log_error}")
+        
+        return {'success': False, 'message': error_msg}
+    finally:
+        if conn:
+            conn.close()
     
     print(f"📤 Forwarding callback to: {callback_url}")
     print(f"Callback data: {json.dumps(callback_data, indent=2)}")

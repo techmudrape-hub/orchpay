@@ -13,9 +13,9 @@ def get_connection_pool():
         print("Initializing database connection pool...")
         _pool = PooledDB(
             creator=pymysql,
-            maxconnections=50,        # Increased for gevent workers (25 per worker for 2 workers)
-            mincached=10,             # Keep 10 idle connections ready
-            maxcached=20,             # Max 20 idle connections
+            maxconnections=100,       # Optimized for high load (was 50)
+            mincached=20,             # Keep 20 idle connections ready (was 10)
+            maxcached=50,             # Max 50 idle connections (was 20)
             maxshared=0,              # No shared connections (thread-safe)
             blocking=True,            # Block if pool exhausted (don't fail)
             maxusage=1000,            # Recycle connection after 1000 uses (prevent memory leaks)
@@ -32,7 +32,7 @@ def get_connection_pool():
             write_timeout=60,         # 60 seconds for write operations
             init_command="SET time_zone='+05:30'"  # Set to IST
         )
-        print(f"Connection pool initialized: max={50}, min_cached={10}, max_cached={20}")
+        print(f"Connection pool initialized: max={100}, min_cached={20}, max_cached={50}")
     return _pool
 
 def get_db_connection():

@@ -727,6 +727,152 @@ class ClientAPI {
   async getMerchantBanks() {
     return this.getBanks();
   }
+
+  // Chargeback APIs
+  async getMerchantChargebacks(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/merchant/chargebacks${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get merchant chargebacks error:', error);
+      throw error;
+    }
+  }
+
+  async downloadChargebackReport(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/merchant/download${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to download report');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chargebacks_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Download chargeback report error:', error);
+      throw error;
+    }
+  }
+
+  async getChargebackStats() {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/merchant/stats`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get chargeback stats error:', error);
+      throw error;
+    }
+  }
+
+  async acceptChargeback(chargebackId) {
+    try {
+      const response = await fetch(`${API_ROOT}/chargeback/merchant/accept/${chargebackId}`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify({})
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Accept chargeback error:', error);
+      throw error;
+    }
+  }
+
+  async getChargebackDeductions(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/merchant/deductions${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get chargeback deductions error:', error);
+      throw error;
+    }
+  }
+
+  async downloadDeductionReport(filters = {}) {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_ROOT}/chargeback/merchant/deductions/download${queryParams ? '?' + queryParams : ''}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to download report');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chargeback_deductions_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Download deduction report error:', error);
+      throw error;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // QR Payment APIs (Merchant)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async getQRStatus() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/qr-status`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get QR status error:', error);
+      throw error;
+    }
+  }
+
+  async getQRTransactions(params = {}) {
+    try {
+      const queryString = new URLSearchParams(params).toString();
+      const response = await fetch(`${API_BASE_URL}/qr-transactions?${queryString}`, {
+        method: 'GET',
+        headers: this.getHeaders(true)
+      });
+      return await this.handleResponse(response);
+    } catch (error) {
+      console.error('Get QR transactions error:', error);
+      throw error;
+    }
+  }
+
 }
 
 // Create singleton instance

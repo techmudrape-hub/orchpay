@@ -1,30 +1,18 @@
-#!/usr/bin/env python3
-"""Check table structures to understand the schema"""
+"""
+Check what columns exist in payout_transactions table
+"""
 
-import pymysql
-from config import Config
+from database_pooled import get_db_connection
 
-conn = pymysql.connect(
-    host=Config.DB_HOST,
-    user=Config.DB_USER,
-    password=Config.DB_PASSWORD,
-    database=Config.DB_NAME,
-    port=3306
-)
-
-print(f"✓ Connected to: {Config.DB_NAME}\n")
-
-tables = ['payout_transactions', 'admin_wallet_transactions', 'merchant_wallet_transactions', 'callback_logs']
-
-with conn.cursor() as cursor:
-    for table in tables:
-        print("=" * 80)
-        print(f"TABLE: {table}")
-        print("=" * 80)
-        cursor.execute(f"DESCRIBE {table}")
+conn = get_db_connection()
+if conn:
+    with conn.cursor() as cursor:
+        cursor.execute("DESCRIBE payout_transactions")
         columns = cursor.fetchall()
+        
+        print("Columns in payout_transactions table:")
+        print("=" * 60)
         for col in columns:
-            print(f"  {col[0]:<30} {col[1]:<20} {col[2]}")
-        print()
-
-conn.close()
+            print(f"  {col['Field']:30} {col['Type']:20} {col['Null']:5} {col['Key']:5}")
+    
+    conn.close()

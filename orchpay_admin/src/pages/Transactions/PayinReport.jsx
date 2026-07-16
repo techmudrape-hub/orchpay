@@ -29,6 +29,10 @@ export default function PayinReport() {
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(null);
+  const [showUtrDialog, setShowUtrDialog] = useState(false);
+  const [utrValue, setUtrValue] = useState('');
+  const [selectedManualTxn, setSelectedManualTxn] = useState(null);
+  const [submittingManual, setSubmittingManual] = useState(false);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 50,
@@ -47,7 +51,8 @@ export default function PayinReport() {
       // Check authentication first
       if (!adminAPI.isAuthenticated()) {
         toast.error('Please login to continue');
-        navigate('/login', { replace: true });
+        const isQR = window.location.pathname.includes('/qrlogin');
+        navigate(isQR ? '/qrlogin' : '/login', { replace: true });
         return;
       }
 
@@ -89,7 +94,8 @@ export default function PayinReport() {
       // Check if it's an authentication error
       if (error.message && (error.message.includes('token') || error.message.includes('401') || error.message.includes('Session expired'))) {
         toast.error('Session expired. Please login again.');
-        navigate('/login', { replace: true });
+        const isQR = window.location.pathname.includes('/qrlogin');
+        navigate(isQR ? '/qrlogin' : '/login', { replace: true });
       } else {
         toast.error(error.message || 'Failed to load transactions');
       }
@@ -301,7 +307,8 @@ export default function PayinReport() {
       // Check authentication
       if (!adminAPI.isAuthenticated()) {
         toast.error('Please login to continue');
-        navigate('/login', { replace: true });
+        const isQR = window.location.pathname.includes('/qrlogin');
+        navigate(isQR ? '/qrlogin' : '/login', { replace: true });
         return;
       }
 
@@ -329,7 +336,8 @@ export default function PayinReport() {
       // Check if it's an authentication error
       if (error.message && (error.message.includes('token') || error.message.includes('401'))) {
         toast.error('Session expired. Please login again.');
-        navigate('/login', { replace: true });
+        const isQR = window.location.pathname.includes('/qrlogin');
+        navigate(isQR ? '/qrlogin' : '/login', { replace: true });
       } else {
         toast.error(error.message || 'Failed to check status');
       }
@@ -378,6 +386,60 @@ export default function PayinReport() {
       toast.error(error.message || 'Failed to create invoice');
     } finally {
       setCreatingInvoice(null);
+    }
+  };
+
+  const handleManualSuccess = (txn) => {
+    setSelectedManualTxn(txn);
+    setUtrValue('');
+    setShowUtrDialog(true);
+  };
+
+  const submitManualUtr = async () => {
+    if (!utrValue.trim()) {
+      toast.error('Please enter a valid UTR');
+      return;
+    }
+    
+    try {
+      setSubmittingManual(true);
+      const response = await adminAPI.manualCompletePayin(selectedManualTxn.txn_id, 'success', utrValue, 'Transaction Successful');
+      
+      if (response.success) {
+        toast.success('Transaction marked as SUCCESS and callback sent');
+        setShowUtrDialog(false);
+        fetchTransactions(); // Refresh the list
+      } else {
+        toast.error(response.message || 'Failed to update transaction');
+      }
+    } catch (error) {
+      console.error('Submit manual UTR error:', error);
+      toast.error(error.message || 'Failed to update transaction');
+    } finally {
+      setSubmittingManual(false);
+    }
+  };
+
+  const handleManualFailed = async (txn) => {
+    if (!window.confirm(`Are you sure you want to mark transaction ${txn.txn_id} as FAILED?`)) {
+      return;
+    }
+    
+    try {
+      setSubmittingManual(true);
+      const response = await adminAPI.manualCompletePayin(txn.txn_id, 'failed', '', 'Manual failure');
+      
+      if (response.success) {
+        toast.success('Transaction marked as FAILED and callback sent');
+        fetchTransactions(); // Refresh the list
+      } else {
+        toast.error(response.message || 'Failed to update transaction');
+      }
+    } catch (error) {
+      console.error('Fail manual txn error:', error);
+      toast.error(error.message || 'Failed to update transaction');
+    } finally {
+      setSubmittingManual(false);
     }
   };
 
@@ -581,6 +643,30 @@ export default function PayinReport() {
                               {creatingInvoice === txn.txn_id ? 'Creating...' : 'Invoice'}
                             </Button>
                           )}
+                          {txn.status === 'INITIATED' && ['HDFC_JVI', 'AU_BANK'].includes(txn.pg_partner) && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleManualSuccess(txn)}
+                                disabled={submittingManual}
+                                className="text-xs h-7 bg-green-50 hover:bg-green-100 border-green-200"
+                                title="Add UTR"
+                              >
+                                Add UTR
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleManualFailed(txn)}
+                                disabled={submittingManual}
+                                className="text-xs h-7 bg-red-50 hover:bg-red-100 border-red-200 text-red-600"
+                                title="Fail Transaction"
+                              >
+                                Fail
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -704,6 +790,40 @@ export default function PayinReport() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Manual UTR Dialog */}
+      <Dialog open={showUtrDialog} onOpenChange={setShowUtrDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enter UTR for Transaction</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {selectedManualTxn && (
+              <div className="text-sm space-y-2">
+                <p className="break-all"><strong>Transaction ID:</strong> {selectedManualTxn.txn_id}</p>
+                <p><strong>Amount:</strong> {formatAmount(selectedManualTxn.amount)}</p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <label htmlFor="utr" className="text-sm font-medium">UTR Number</label>
+              <Input
+                id="utr"
+                placeholder="Enter 12-digit UTR number"
+                value={utrValue}
+                onChange={(e) => setUtrValue(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setShowUtrDialog(false)} disabled={submittingManual}>
+                Cancel
+              </Button>
+              <Button onClick={submitManualUtr} disabled={submittingManual || !utrValue.trim()}>
+                {submittingManual ? 'Submitting...' : 'Mark Success'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

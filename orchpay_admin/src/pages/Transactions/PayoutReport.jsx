@@ -4,7 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Badge } from '../../components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
+import { Label } from '../../components/ui/label';
+import { Textarea } from '../../components/ui/textarea';
 import { toast } from 'sonner';
 import adminAPI from '../../api/admin_api';
 import {
@@ -15,7 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { Search, Download, RefreshCw, Eye } from 'lucide-react';
+import { Search, Download, RefreshCw, Eye, CheckCircle, Loader2, XCircle, AlertTriangle } from 'lucide-react';
 
 export default function PayoutReport() {
   const navigate = useNavigate();
@@ -31,6 +33,13 @@ export default function PayoutReport() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // Mark failed dialog state
+  const [showMarkFailedDialog, setShowMarkFailedDialog] = useState(false);
+  const [selectedPayoutToFail, setSelectedPayoutToFail] = useState(null);
+  const [failReason, setFailReason] = useState('');
+  const [marking, setMarking] = useState(false);
+
+  // Restored missing functions
   useEffect(() => {
     fetchPayouts();
   }, [statusFilter, searchTerm, fromDate, toDate, currentPage, pageSize]);
@@ -136,10 +145,11 @@ export default function PayoutReport() {
   };
 
   const exportToCSV = () => {
-    const headers = ['Transaction ID', 'Reference ID', 'Merchant/Admin', 'Beneficiary', 'Bank', 'IFSC', 'Account No', 'Amount', 'Charges', 'Net Amount', 'Status', 'UTR', 'Date'];
+    const headers = ['Transaction ID', 'Reference ID', 'Order ID', 'Merchant/Admin', 'Beneficiary', 'Bank', 'IFSC', 'Account No', 'Amount', 'Charges', 'Net Amount', 'Status', 'UTR', 'Date'];
     const rows = filteredPayouts.map(payout => [
       payout.txn_id,
       payout.reference_id,
+      payout.order_id || '-',
       payout.payer_name || payout.full_name || 'Admin Payout',
       payout.bene_name,
       payout.bene_bank || '-',
@@ -187,10 +197,11 @@ export default function PayoutReport() {
         return;
       }
 
-      const headers = ['Transaction ID', 'Reference ID', 'Merchant/Admin', 'Beneficiary', 'Bank', 'IFSC', 'Account No', 'Amount', 'Charges', 'Net Amount', 'Status', 'UTR', 'Date & Time'];
+      const headers = ['Transaction ID', 'Reference ID', 'Order ID', 'Merchant/Admin', 'Beneficiary', 'Bank', 'IFSC', 'Account No', 'Amount', 'Charges', 'Net Amount', 'Status', 'UTR', 'Date & Time'];
       const rows = todayPayouts.map(payout => [
         payout.txn_id,
         payout.reference_id,
+        payout.order_id || '-',
         payout.payer_name || payout.full_name || 'Admin Payout',
         payout.bene_name,
         payout.bene_bank || '-',
@@ -258,10 +269,11 @@ export default function PayoutReport() {
         return;
       }
 
-      const headers = ['Transaction ID', 'Reference ID', 'Merchant/Admin', 'Beneficiary', 'Bank', 'IFSC', 'Account No', 'Amount', 'Charges', 'Net Amount', 'Status', 'UTR', 'Date & Time'];
+      const headers = ['Transaction ID', 'Reference ID', 'Order ID', 'Merchant/Admin', 'Beneficiary', 'Bank', 'IFSC', 'Account No', 'Amount', 'Charges', 'Net Amount', 'Status', 'UTR', 'Date & Time'];
       const rows = filteredPayouts.map(payout => [
         payout.txn_id,
         payout.reference_id,
+        payout.order_id || '-',
         payout.payer_name || payout.full_name || 'Admin Payout',
         payout.bene_name,
         payout.bene_bank || '-',
@@ -300,6 +312,42 @@ export default function PayoutReport() {
     setShowDetailsDialog(true);
   };
 
+  const handleMarkSingleFailed = async () => {
+    if (!failReason.trim()) {
+      toast.error('Please provide a reason');
+      return;
+    }
+
+    try {
+      setMarking(true);
+      const response = await adminAPI.markTransactionFailed({
+        txn_type: 'payout',
+        txn_id: selectedPayoutToFail.txn_id,
+        reason: failReason
+      });
+
+      if (response.success) {
+        toast.success('Transaction marked as failed');
+        if (response.callback_sent) {
+          toast.success('Callback sent successfully');
+        } else if (response.callback_message) {
+          toast.info(`Callback: ${response.callback_message}`);
+        }
+        setShowMarkFailedDialog(false);
+        setFailReason('');
+        setSelectedPayoutToFail(null);
+        fetchPayouts();
+      } else {
+        toast.error(response.message || 'Failed to mark transaction');
+      }
+    } catch (error) {
+      console.error('Mark failed error:', error);
+      toast.error(error.message || 'Failed to mark transaction');
+    } finally {
+      setMarking(false);
+    }
+  };
+
   const handleCheckStatus = async (txnId) => {
     try {
       setSyncingStatus(prev => ({ ...prev, [txnId]: true }));
@@ -322,6 +370,77 @@ export default function PayoutReport() {
       toast.error(error.message || 'Failed to check status');
     } finally {
       setSyncingStatus(prev => ({ ...prev, [txnId]: false }));
+    }
+  };
+
+  // Manual Success one-click handler
+  const generateRandomUTR = () => {
+    let utr = "61";
+    for(let i = 0; i < 10; i++) {
+      utr += Math.floor(Math.random() * 10).toString();
+    }
+    return utr;
+  };
+
+  const handlePushCallbackMaxpe = async (payout) => {
+    try {
+      setSyncingStatus(prev => ({ ...prev, [payout.txn_id]: true }));
+      const randomUtr = generateRandomUTR();
+      const utrToUse = payout.utr || randomUtr;
+      const response = await adminAPI.markTransactionSuccess({
+        txn_type: 'payout',
+        txn_id: payout.txn_id,
+        utr: utrToUse,
+        remarks: 'Manual success via Push Callback',
+        callback_format: 'maxpe'
+      });
+
+      if (response.success) {
+        toast.success(`Transaction marked as success and Callback pushed. UTR: ${utrToUse}`);
+        if (response.callback_sent) {
+          toast.success('Callback sent successfully');
+        } else if (response.callback_message) {
+          toast.info(`Callback: ${response.callback_message}`);
+        }
+        fetchPayouts();
+      } else {
+        toast.error(response.message || 'Failed to push callback');
+      }
+    } catch (error) {
+      console.error('Push callback error:', error);
+      toast.error(error.message || 'Failed to push callback');
+    } finally {
+      setSyncingStatus(prev => ({ ...prev, [payout.txn_id]: false }));
+    }
+  };
+
+  const handleOneClickSuccess = async (payout) => {
+    try {
+      setSyncingStatus(prev => ({ ...prev, [payout.txn_id]: true }));
+      const randomUtr = generateRandomUTR();
+      const response = await adminAPI.markTransactionSuccess({
+        txn_type: 'payout',
+        txn_id: payout.txn_id,
+        utr: randomUtr,
+        remarks: 'Manual success via one-click'
+      });
+
+      if (response.success) {
+        toast.success(`Transaction marked as success. UTR: ${randomUtr}`);
+        if (response.callback_sent) {
+          toast.success('Callback sent successfully');
+        } else if (response.callback_message) {
+          toast.info(`Callback: ${response.callback_message}`);
+        }
+        fetchPayouts();
+      } else {
+        toast.error(response.message || 'Failed to mark transaction as success');
+      }
+    } catch (error) {
+      console.error('Mark success error:', error);
+      toast.error(error.message || 'Failed to mark transaction as success');
+    } finally {
+      setSyncingStatus(prev => ({ ...prev, [payout.txn_id]: false }));
     }
   };
 
@@ -543,6 +662,51 @@ export default function PayoutReport() {
                               {syncingStatus[payout.txn_id] ? 'Checking...' : 'Check'}
                             </Button>
                           )}
+                          {(payout.status === 'INITIATED' || payout.status === 'QUEUED') && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOneClickSuccess(payout)}
+                              disabled={syncingStatus[payout.txn_id]}
+                              className="text-xs h-7 border-green-200 text-green-700 hover:bg-green-50"
+                            >
+                              {syncingStatus[payout.txn_id] ? (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              ) : (
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                              )}
+                              {syncingStatus[payout.txn_id] ? 'Processing...' : 'Success'}
+                            </Button>
+                          )}
+                          {(payout.status === 'INITIATED' || payout.status === 'QUEUED' || payout.status === 'INPROCESS' || (payout.status === 'SUCCESS' && payout.pg_partner?.toLowerCase() === 'oqpay')) && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePushCallbackMaxpe(payout)}
+                              disabled={syncingStatus[payout.txn_id]}
+                              className="text-xs h-7 border-blue-200 text-blue-700 hover:bg-blue-50"
+                            >
+                              {syncingStatus[payout.txn_id] ? (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3 mr-1" />
+                              )}
+                              Push Callback
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => {
+                              setSelectedPayoutToFail(payout);
+                              setShowMarkFailedDialog(true);
+                            }}
+                            disabled={payout.status === 'FAILED'}
+                            className="text-xs h-7"
+                          >
+                            <XCircle className="h-3 w-3 mr-1" />
+                            Failed
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -718,6 +882,45 @@ export default function PayoutReport() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark Single Failed Dialog */}
+      <Dialog open={showMarkFailedDialog} onOpenChange={setShowMarkFailedDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark Transaction as Failed</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Transaction ID</Label>
+              <Input value={selectedPayoutToFail?.txn_id || ''} disabled />
+            </div>
+            <div>
+              <Label>Reason for Failure *</Label>
+              <Textarea
+                placeholder="Enter reason for marking this transaction as failed"
+                value={failReason}
+                onChange={(e) => setFailReason(e.target.value)}
+                rows={4}
+              />
+            </div>
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
+              <p className="text-sm text-yellow-800">
+                <AlertTriangle className="h-4 w-4 inline mr-2" />
+                This will mark the transaction as FAILED and send a callback if configured.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowMarkFailedDialog(false)} disabled={marking}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleMarkSingleFailed} disabled={marking || !failReason.trim()}>
+              {marking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <XCircle className="h-4 w-4 mr-2" />}
+              Mark as Failed
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

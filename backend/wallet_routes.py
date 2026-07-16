@@ -308,7 +308,9 @@ def get_merchant_wallet_overview():
             # Get settled and unsettled balances from merchant_wallet
             # Use FOR UPDATE to ensure we read the latest committed data
             cursor.execute("""
-                SELECT settled_balance, unsettled_balance, balance
+                SELECT settled_balance, unsettled_balance, balance, 
+                       COALESCE(cyber_hold_amount, 0.00) as cyber_hold_amount, 
+                       COALESCE(total_hold_amount, 0.00) as total_hold_amount
                 FROM merchant_wallet
                 WHERE merchant_id = %s
             """, (merchant_id,))
@@ -320,15 +322,19 @@ def get_merchant_wallet_overview():
                 # Use the old balance field as settled_balance if settled_balance is 0
                 if settled_balance == 0 and wallet_result['balance']:
                     settled_balance = float(wallet_result['balance'])
+                cyber_hold_amount = float(wallet_result['cyber_hold_amount'])
+                total_hold_amount = float(wallet_result['total_hold_amount'])
             else:
                 # Create wallet if doesn't exist
                 cursor.execute("""
-                    INSERT INTO merchant_wallet (merchant_id, balance, settled_balance, unsettled_balance)
-                    VALUES (%s, 0.00, 0.00, 0.00)
+                    INSERT INTO merchant_wallet (merchant_id, balance, settled_balance, unsettled_balance, cyber_hold_amount, total_hold_amount)
+                    VALUES (%s, 0.00, 0.00, 0.00, 0.00, 0.00)
                 """, (merchant_id,))
                 conn.commit()
                 settled_balance = 0.00
                 unsettled_balance = 0.00
+                cyber_hold_amount = 0.00
+                total_hold_amount = 0.00
             
             # Wallet Balance = Settled Balance (no calculation, just use the field directly)
             wallet_balance = settled_balance
@@ -387,6 +393,8 @@ def get_merchant_wallet_overview():
                 'balance': wallet_balance,  # Settled Balance (available for payout)
                 'settled_balance': settled_balance,  # Same as balance
                 'unsettled_balance': unsettled_balance,  # Unsettled amount pending admin approval
+                'cyber_hold_amount': cyber_hold_amount,
+                'total_hold_amount': total_hold_amount,
                 'on_hold': 0.00,
                 'total_credit': 0,  # Legacy field
                 'total_debit': 0,  # Legacy field
@@ -430,6 +438,7 @@ def get_merchant_wallet_statement():
         from_date = request.args.get('from_date')
         to_date = request.args.get('to_date')
         filter_type = request.args.get('filter_type')  # New filter: topup, fetch, fund_request, settlement, unsettled_settlement
+        txn_type = request.args.get('txn_type')  # CREDIT or DEBIT filter
         
         from database import get_db_connection
         conn = get_db_connection()
@@ -563,6 +572,11 @@ def get_merchant_wallet_statement():
             if to_date:
                 query += " AND DATE(created_at) <= %s"
                 params.append(to_date)
+            
+            # Add txn_type filter
+            if txn_type:
+                query += " AND txn_type = %s"
+                params.append(txn_type)
             
             query += " ORDER BY created_at DESC"
             

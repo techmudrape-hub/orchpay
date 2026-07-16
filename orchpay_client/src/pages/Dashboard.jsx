@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { 
   TrendingUp, DollarSign, 
-  ArrowUpCircle, ArrowDownCircle, Clock, RefreshCw, Wallet
+  ArrowUpCircle, ArrowDownCircle, Clock, RefreshCw, Wallet, AlertTriangle, ShieldAlert
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
 import clientAPI from '@/api/client_api'
@@ -62,7 +62,9 @@ export default function Dashboard() {
     payinCharges: 0,
     totalPayout: 0,
     settled_balance: 0,
-    unsettled_balance: 0
+    unsettled_balance: 0,
+    cyber_hold_amount: 0,
+    total_hold_amount: 0
   })
   const [payinStats, setPayinStats] = useState({
     success: { count: 0, amount: 0 },
@@ -74,6 +76,9 @@ export default function Dashboard() {
     pending: { count: 0, amount: 0 },
     failed: { count: 0, amount: 0 },
     queued: { count: 0, amount: 0 }
+  })
+  const [chargebackStats, setChargebackStats] = useState({
+    total_amount: 0
   })
   const [timeRangeData, setTimeRangeData] = useState({
     today: { payin: 0, payout: 0 },
@@ -90,11 +95,12 @@ export default function Dashboard() {
     try {
       setLoading(true)
       
-      // Fetch wallet data, payin stats, and payout stats in parallel
-      const [walletResponse, payinStatsResponse, payoutStatsResponse] = await Promise.all([
+      // Fetch wallet data, payin stats, payout stats, and chargeback stats in parallel
+      const [walletResponse, payinStatsResponse, payoutStatsResponse, chargebackStatsResponse] = await Promise.all([
         clientAPI.getWalletOverview(),
         clientAPI.getPayinStats(),
-        clientAPI.getPayoutStats()
+        clientAPI.getPayoutStats(),
+        clientAPI.getChargebackStats()
       ])
       
       if (walletResponse.success && walletResponse.data) {
@@ -105,7 +111,9 @@ export default function Dashboard() {
           payinCharges: walletResponse.data.payin_charges || 0,  // Total charges
           totalPayout: walletResponse.data.total_settlements || 0,
           settled_balance: walletResponse.data.settled_balance || 0,  // NEW: Settled amount
-          unsettled_balance: walletResponse.data.unsettled_balance || 0  // NEW: Unsettled amount
+          unsettled_balance: walletResponse.data.unsettled_balance || 0,  // NEW: Unsettled amount
+          cyber_hold_amount: walletResponse.data.cyber_hold_amount || 0,
+          total_hold_amount: walletResponse.data.total_hold_amount || 0
         })
       }
       
@@ -144,6 +152,10 @@ export default function Dashboard() {
             last30days: { ...prev.last30days, payout: payoutStatsResponse.timeRanges.last30days.payout },
           }))
         }
+      }
+
+      if (chargebackStatsResponse.success) {
+        setChargebackStats(chargebackStatsResponse.stats || { total_amount: 0 })
       }
     } catch (error) {
       toast.error('Failed to load dashboard data')
@@ -236,8 +248,8 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Wallet Balance Cards - Settled and Unsettled */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Wallet Balance Cards - Settled, Unsettled, Chargebacks, Cyber Hold, Total Hold */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card className="orchpay-card border-2 border-green-200 bg-gradient-to-br from-green-50 to-white hover:scale-[1.02] transition-all">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
@@ -271,6 +283,10 @@ export default function Dashboard() {
             <p className="text-xs text-gray-500 mt-2 font-medium">Pending admin settlement approval</p>
           </CardContent>
         </Card>
+
+
+
+
       </div>
 
       {/* Payin/Payout Tabs */}

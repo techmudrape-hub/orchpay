@@ -331,39 +331,153 @@ def get_pg_partners():
                 'status': 'active'
             },
             {
-                'id': 'Paytouch2',
-                'name': 'Paytouch2_Grosmart',
-                'supports': ['PAYOUT'],
+                'id': 'Mudrape',
+                'name': 'Mudrape',
+                'supports': ['PAYIN', 'PAYOUT'],
                 'status': 'active'
             },
             {
-                'id': 'Airpay',
-                'name': 'Airpay',
-                'supports': ['PAYIN'],
-                'status': 'active'
-            },
-            {
-                'id': 'Paytouchpayin',
-                'name': 'Paytouchpayin_Grosmart',
-                'supports': ['PAYIN'],
-                'status': 'active'
-            },
-            {
-                'id': 'Rang',
-                'name': 'Rang',
+                'id': 'MONEYONE',
+                'name': 'MoneyOne',
                 'supports': ['PAYIN'],
                 'status': 'active'
             },
             {
                 'id': 'VIYONAPAY',
-                'name': 'Viyonapay_Truaxis',
+                'name': 'Viyonapay',
                 'supports': ['PAYIN'],
                 'status': 'active'
             },
             {
-                'id': 'VIYONAPAY_BARRINGER',
-                'name': 'Viyonapay_Barringer',
+                'id': 'INSTANTPESA',
+                'name': 'InstantPesa',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'CINORIGHT',
+                'name': 'Cinoright',
+                'supports': ['PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'MAXPE',
+                'name': 'Maxpe',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'NODEPAY',
+                'name': 'NodePay',
+                'supports': ['PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'RAZORPAY',
+                'name': 'Razorpay',
                 'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'PAYTM',
+                'name': 'Paytm',
+                'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'CLOCKSPAY',
+                'name': 'ClocksPay',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'RISEXPAY',
+                'name': 'Risexpay',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'ROCKYPAYZ',
+                'name': 'RockyPayz',
+                'supports': ['PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'PES',
+                'name': 'Sectorpe',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'OQPAY',
+                'name': 'OQPay',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'ALOPNA',
+                'name': 'Alopna',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'NEXTPAY',
+                'name': 'Nextpay',
+                'supports': ['PAYIN', 'PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'TPIPAY',
+                'name': 'Tpipay',
+                'supports': ['PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'MAKEMYPAYMENT',
+                'name': 'MakeMyPayment',
+                'supports': ['PAYOUT'],
+                'status': 'active'
+            },
+            {
+                'id': 'PAYU_LEGALHALT',
+                'name': 'PayU Legal Halt',
+                'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'LOCALPAISA',
+                'name': 'Localpaisa',
+                'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'TITANEXAM',
+                'name': 'Titanexam',
+                'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'ACCEPTPAY',
+                'name': 'Acceptpay',
+                'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'HDFC_JVI',
+                'name': 'HDFC JVI',
+                'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'AU_BANK',
+                'name': 'AU Bank',
+                'supports': ['PAYIN'],
+                'status': 'active'
+            },
+            {
+                'id': 'ORO',
+                'name': 'ORO',
+                'supports': ['PAYIN', 'PAYOUT'],
                 'status': 'active'
             }
             # Add more PG partners here as they are integrated

@@ -7,7 +7,7 @@ import {
   UserPlus, List, Route, MessageSquare,
   FileText, Clock, DollarSign, Building,
   Lock, Key, CreditCard, Briefcase, Package, User,
-  ChevronLeft, ChevronRight, AlertTriangle, RefreshCw
+  ChevronLeft, ChevronRight, AlertTriangle, RefreshCw, QrCode
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,6 +42,21 @@ const menuItems = [
       { title: 'Pending Payout', icon: Clock, path: '/transactions/pending-payout' },
     ]
   },
+  { 
+    title: 'Manual Reconciliation', 
+    icon: RefreshCw, 
+    path: '/manual-reconciliation' 
+  },
+  { 
+    title: 'Chargeback Manager', 
+    icon: AlertTriangle, 
+    path: '/chargeback-manager' 
+  },
+  { 
+    title: 'User Transaction Summary', 
+    icon: User, 
+    path: '/user-transaction-summary' 
+  },
   {
     title: 'Fund Manager',
     icon: TrendingUp,
@@ -50,6 +65,7 @@ const menuItems = [
       { title: 'Fetch Fund', icon: Package, path: '/fund-manager/fetch' },
       { title: 'Fund Requests', icon: FileText, path: '/fund-manager/requests' },
       { title: 'Settle Wallet', icon: Wallet, path: '/wallet/settle' },
+      { title: 'Auto-Settlement', icon: Clock, path: '/wallet/auto-settlement' },
       { title: 'Wallet Overview', icon: Wallet, path: '/wallet/overview' },
       { title: 'Wallet Statement', icon: FileText, path: '/wallet/statement' },
     ]
@@ -81,6 +97,14 @@ const menuItems = [
     title: 'Activity Logs', 
     icon: Activity, 
     path: '/activity-logs' 
+  },
+  {
+    title: 'QR Collection',
+    icon: QrCode,
+    submenu: [
+      { title: 'QR Service Routing', icon: QrCode, path: '/qr/service-routing' },
+      { title: 'QR Transactions', icon: FileText, path: '/qr/transactions' },
+    ]
   },
 ]
 

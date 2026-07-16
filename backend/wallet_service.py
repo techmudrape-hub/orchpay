@@ -289,18 +289,19 @@ class WalletService:
             
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    SELECT * FROM merchant_wallet WHERE merchant_id = %s
+                    SELECT *, COALESCE(cyber_hold_amount, 0.00) as cyber_hold_amount, COALESCE(total_hold_amount, 0.00) as total_hold_amount 
+                    FROM merchant_wallet WHERE merchant_id = %s
                 """, (merchant_id,))
                 wallet = cursor.fetchone()
                 
                 if not wallet:
                     # Create wallet if doesn't exist
                     cursor.execute("""
-                        INSERT INTO merchant_wallet (merchant_id, balance)
-                        VALUES (%s, 0.00)
+                        INSERT INTO merchant_wallet (merchant_id, balance, cyber_hold_amount, total_hold_amount)
+                        VALUES (%s, 0.00, 0.00, 0.00)
                     """, (merchant_id,))
                     conn.commit()
-                    wallet = {'merchant_id': merchant_id, 'balance': 0.00}
+                    wallet = {'merchant_id': merchant_id, 'balance': 0.00, 'cyber_hold_amount': 0.00, 'total_hold_amount': 0.00}
                 
                 # Get total credits and debits
                 cursor.execute("""
@@ -644,71 +645,6 @@ class WalletService:
                         'message': f'Insufficient unsettled balance. Available: ₹{unsettled_balance:.2f}'
                     }
                 
-                # CRITICAL: Check admin wallet balance before settlement
-                # Calculate admin balance including manual adjustments
-                cursor.execute("""
-                    SELECT COALESCE(SUM(amount), 0) as total_payin
-                    FROM payin_transactions
-                    WHERE status = 'SUCCESS'
-                """)
-                total_payin = float(cursor.fetchone()['total_payin'])
-                
-                cursor.execute("""
-                    SELECT COALESCE(SUM(amount), 0) as total_topup
-                    FROM fund_requests
-                    WHERE status = 'APPROVED'
-                """)
-                total_topup = float(cursor.fetchone()['total_topup'])
-                
-                cursor.execute("""
-                    SELECT COALESCE(SUM(amount), 0) as total_fetch
-                    FROM merchant_wallet_transactions
-                    WHERE txn_type = 'DEBIT' 
-                    AND description LIKE '%fetched by admin%'
-                """)
-                total_fetch = float(cursor.fetchone()['total_fetch'])
-                
-                cursor.execute("""
-                    SELECT COALESCE(SUM(amount), 0) as total_payout
-                    FROM payout_transactions
-                    WHERE status IN ('SUCCESS', 'QUEUED')
-                    AND reference_id LIKE 'ADMIN%'
-                """)
-                total_payout = float(cursor.fetchone()['total_payout'])
-                
-                # Manual adjustments
-                cursor.execute("""
-                    SELECT COALESCE(SUM(
-                        CASE 
-                            WHEN txn_type = 'CREDIT' THEN amount
-                            WHEN txn_type = 'DEBIT' THEN -amount
-                            ELSE 0
-                        END
-                    ), 0) as total_adjustments
-                    FROM admin_wallet_transactions
-                    WHERE description LIKE '%Manual balance%'
-                    OR description LIKE '%Balance adjustment%'
-                    OR description LIKE '%Initial capital%'
-                """)
-                total_adjustments = float(cursor.fetchone()['total_adjustments'])
-                
-                # Get total settlements already done (to avoid double counting)
-                cursor.execute("""
-                    SELECT COALESCE(SUM(amount), 0) as total_settlements
-                    FROM settlement_transactions
-                """)
-                total_settlements = float(cursor.fetchone()['total_settlements'])
-                
-                # Admin balance = PayIN + Fetch - Topups - Payouts + Adjustments - Settlements
-                admin_balance = total_payin + total_fetch - total_topup - total_payout + total_adjustments - total_settlements
-                
-                if admin_balance < float(amount):
-                    conn.close()
-                    return {
-                        'success': False,
-                        'message': f'Insufficient admin wallet balance. Available: ₹{admin_balance:.2f}'
-                    }
-                
                 # Update merchant balances
                 new_unsettled = unsettled_balance - float(amount)
                 new_settled = settled_balance + float(amount)
@@ -739,57 +675,6 @@ class WalletService:
                 """, (merchant_id, txn_id, amount, settled_balance, new_settled, 
                       f'Settled by admin - {remarks or ""}', settlement_id))
                 
-                # CRITICAL: Update admin unsettled wallet during settlement
-                # Calculate proportional charge amount from this settlement
-                # Get merchant's payin charges that are in unsettled
-                cursor.execute("""
-                    SELECT COALESCE(SUM(charge_amount), 0) as total_charges
-                    FROM payin_transactions
-                    WHERE merchant_id = %s AND status = 'SUCCESS'
-                """, (merchant_id,))
-                merchant_total_charges = float(cursor.fetchone()['total_charges'])
-                
-                # Get admin unsettled balance
-                cursor.execute("""
-                    SELECT unsettled_balance FROM admin_wallet WHERE admin_id = %s
-                """, (admin_id,))
-                admin_wallet = cursor.fetchone()
-                admin_unsettled_before = float(admin_wallet['unsettled_balance']) if admin_wallet else 0.00
-                
-                # Calculate proportional charge for this settlement
-                # Ratio = amount being settled / total merchant unsettled
-                charge_ratio = float(amount) / unsettled_balance if unsettled_balance > 0 else 0
-                charge_amount = admin_unsettled_before * charge_ratio
-                admin_unsettled_after = admin_unsettled_before - charge_amount
-                
-                # Update admin unsettled balance
-                cursor.execute("""
-                    UPDATE admin_wallet
-                    SET unsettled_balance = %s, last_updated = NOW()
-                    WHERE admin_id = %s
-                """, (admin_unsettled_after, admin_id))
-                
-                # Record admin unsettled wallet transaction
-                admin_unsettled_txn_id = self.generate_txn_id('AWT')
-                cursor.execute("""
-                    INSERT INTO admin_wallet_transactions 
-                    (admin_id, txn_id, txn_type, amount, balance_before, balance_after, description, reference_id)
-                    VALUES (%s, %s, 'UNSETTLED_DEBIT', %s, %s, %s, %s, %s)
-                """, (admin_id, admin_unsettled_txn_id, charge_amount, admin_unsettled_before, admin_unsettled_after,
-                      f"Settlement charge debit for merchant {merchant_id} - {settlement_id}", settlement_id))
-                
-                # CRITICAL: Record admin wallet debit for settlement (main balance tracking)
-                admin_balance_before = admin_balance
-                admin_balance_after = admin_balance - float(amount)
-                
-                admin_txn_id = self.generate_txn_id('AWT')
-                cursor.execute("""
-                    INSERT INTO admin_wallet_transactions 
-                    (admin_id, txn_id, txn_type, amount, balance_before, balance_after, description, reference_id)
-                    VALUES (%s, %s, 'DEBIT', %s, %s, %s, %s, %s)
-                """, (admin_id, admin_txn_id, amount, admin_balance_before, admin_balance_after,
-                      f"Settlement for merchant {merchant_id} - {settlement_id}", settlement_id))
-                
                 conn.commit()
             
             conn.close()
@@ -797,8 +682,7 @@ class WalletService:
                 'success': True,
                 'settlement_id': settlement_id,
                 'settled_balance': new_settled,
-                'unsettled_balance': new_unsettled,
-                'admin_balance_after': admin_balance_after
+                'unsettled_balance': new_unsettled
             }
             
         except Exception as e:

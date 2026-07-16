@@ -4,7 +4,7 @@ from functools import wraps
 import jwt
 import bcrypt
 from datetime import datetime
-from database import get_db_connection
+from database_pooled import get_db_connection
 from config import Config
 import payout_service
 import payu_payout_service
@@ -12,8 +12,20 @@ import wallet_service
 import uuid
 import json
 from mudrape_service import mudrape_service
+from instantpesa_service import InstantPesaService
 from paytouch_service import paytouch_service
 from paytouch2_service import paytouch2_service
+from cinoright_service import cinoright_service
+from maxpe_payout_service import maxpe_payout_service, get_payout_service
+from clockspay_payout_service import clockspay_payout_service
+from sectorpe_payout_service import sectorpe_payout_service
+from rockypayz_payout_service import rockypayz_payout_service
+from oqpay_payout_service import oqpay_payout_service
+from alopna_service import alopna_service
+from risexpay_payout_service import risexpay_payout_service
+from tpipay_payout_service import tpipay_payout_service
+from makemypayment_payout_service import makemypayment_payout_service
+from oro_payout_service import oro_payout_service
 
 payout_bp = Blueprint('payout', __name__, url_prefix='/api/payout')
 
@@ -21,9 +33,56 @@ payout_bp = Blueprint('payout', __name__, url_prefix='/api/payout')
 payout_svc = payout_service.payout_service
 payu_payout_svc = payu_payout_service.payu_payout_service
 wallet_svc = wallet_service.wallet_service
+instantpesa_svc = InstantPesaService()
 
 
 # Admin Personal Payout
+@payout_bp.route('/admin/risexpay-auto-success', methods=['POST'])
+@jwt_required()
+def toggle_risexpay_auto_success():
+    try:
+        data = request.json
+        is_enabled = data.get('enabled', True)
+        merchant_id = data.get('merchant_id')
+        
+        import risexpay_payout_service as rps
+        rps.set_auto_success_enabled(is_enabled, merchant_id)
+        
+        # We don't need to update rps.AUTO_SUCCESS_ENABLED anymore as it's fetched dynamically
+        
+        msg = f"Risexpay auto-success turned {'ON' if is_enabled else 'OFF'} successfully"
+        if merchant_id:
+            msg += f" for merchant {merchant_id}"
+            
+        return jsonify({
+            'success': True,
+            'message': msg,
+            'enabled': is_enabled,
+            'merchant_id': merchant_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+@payout_bp.route('/admin/risexpay-auto-success', methods=['GET'])
+@jwt_required()
+def get_risexpay_auto_success():
+    try:
+        merchant_id = request.args.get('merchant_id')
+        import risexpay_payout_service as rps
+        return jsonify({
+            'success': True,
+            'enabled': rps.get_auto_success_enabled(merchant_id),
+            'merchant_id': merchant_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
 @payout_bp.route('/admin/personal-payout', methods=['POST'])
 @jwt_required()
 def admin_personal_payout():
@@ -36,10 +95,20 @@ def admin_personal_payout():
         admin_id = get_jwt_identity()
         
         # Validate required fields
-        required_fields = ['bank_id', 'amount', 'tpin', 'pg_partner']
+        required_fields = ['bank_id', 'amount', 'tpin', 'pg_partner', 'mobile_number', 'email_address']
         for field in required_fields:
             if field not in data:
                 return jsonify({'success': False, 'message': f'{field} is required'}), 400
+        
+        # Validate mobile number
+        mobile_number = str(data['mobile_number']).strip()
+        if not mobile_number or len(mobile_number) != 10 or not mobile_number.isdigit():
+            return jsonify({'success': False, 'message': 'Invalid mobile number. Must be 10 digits'}), 400
+        
+        # Validate email address
+        email_address = str(data['email_address']).strip()
+        if not email_address or '@' not in email_address:
+            return jsonify({'success': False, 'message': 'Invalid email address'}), 400
         
         # Validate amount
         try:
@@ -80,13 +149,51 @@ def admin_personal_payout():
                 if not bank:
                     return jsonify({'success': False, 'message': 'Bank not found'}), 404
                 
-                # NO WALLET BALANCE CHECK - Admin personal payouts go directly through Mudrape
+                # NO WALLET BALANCE CHECK - Admin personal payouts go directly through gateway
                 
-                # Create payout transaction record (using admin_id field for admin payouts)
-                reference_id = f"ADMIN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
-                txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
+                # Create payout transaction record with NULL merchant_id (admin payouts don't belong to any merchant)
+                # Generate gateway-specific txn_id prefix for easy identification
+                pg_partner_upper = data['pg_partner'].upper()
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                random_suffix = uuid.uuid4().hex[:6].upper()
+                
+                # Reference ID remains ADMIN for admin payouts
+                reference_id = f"ADMIN{timestamp}{random_suffix}"
+                
+                # Gateway-specific TXN_ID for easy identification
+                if pg_partner_upper == 'ROCKYPAYZ':
+                    txn_id = f"RCK_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper in ['PES', 'SECTORPE']:
+                    txn_id = f"PES_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper in ['MAXPE', 'NODEPAY']:
+                    txn_id = f"MAXPE_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"NEXTPAY_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"MAXPE_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"NEXTPAY_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'CLOCKSPAY':
+                    txn_id = f"CLK_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'CINORIGHT':
+                    txn_id = f"CINO_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'ALOPNA':
+                    txn_id = f"ALOPNA_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'OQPAY':
+                    txn_id = f"OQP_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'RISEXPAY':
+                    txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'TPIPAY':
+                    txn_id = f"TPI_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'MAKEMYPAYMENT':
+                    txn_id = f"MMP_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'ORO':
+                    txn_id = f"ORO_{uuid.uuid4().hex[:12].upper()}"
+                else:
+                    txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
+                
                 # Auto-generate order_id for admin payouts
-                order_id = f"ORD{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:8].upper()}"
+                order_id = f"ORD{timestamp}{uuid.uuid4().hex[:8].upper()}"
                 
                 cursor.execute("""
                     INSERT INTO payout_transactions 
@@ -99,15 +206,14 @@ def admin_personal_payout():
                 
                 conn.commit()
                 
-                # Process payout based on pg_partner
-                pg_partner_upper = data['pg_partner'].upper()
+                # Process payout based on pg_partner (already set above)
                 
                 if pg_partner_upper == 'PAYU':
                     # Use PayU for payout - Direct API call, NO wallet deduction
                     transfer_data = [{
                         'bene_name': bank['account_holder_name'],
-                        'bene_email': '',
-                        'bene_mobile': '',
+                        'bene_email': email_address,
+                        'bene_mobile': mobile_number,
                         'purpose': 'Admin Personal Payout',
                         'amount': float(data['amount']),
                         'batch_id': '',
@@ -157,7 +263,9 @@ def admin_personal_payout():
                         ifsc_code=bank['ifsc_code'],
                         client_txn_id=reference_id,
                         amount=float(data['amount']),
-                        beneficiary_name=bank['account_holder_name']
+                        beneficiary_name=bank['account_holder_name'],
+                        mobile=mobile_number,
+                        email=email_address
                     )
                     
                     if result['success']:
@@ -243,6 +351,62 @@ def admin_personal_payout():
                                 conn.commit()
                                 print(f"DEBUG: Final UPDATE committed, rows affected: {cursor.rowcount}")
                                 status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'INSTANTPESA':
+                    # Use InstantPesa for payout (IMPS/NEFT/RTGS) - Direct API call, NO wallet deduction
+                    payout_data = {
+                        'amount': float(data['amount']),
+                        'account_number': bank['account_number'],
+                        'ifsc_code': bank['ifsc_code'],
+                        'bank_name': bank['bank_name'],
+                        'beneficiary_name': bank['account_holder_name'],
+                        'email': email_address,
+                        'mobile': mobile_number,
+                        'transaction_mode': data.get('transaction_mode', 'IMPS')
+                    }
+                    
+                    result = instantpesa_svc.create_imps_payout(
+                        merchant_id=None,  # No merchant for admin payouts
+                        payout_data=payout_data
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through InstantPesa
+                        # Update transaction with InstantPesa response
+                        status = result.get('data', {}).get('status', 'INITIATED')
+                        instantpesa_txn_id = result.get('data', {}).get('transaction_id', '')
+                        
+                        print(f"InstantPesa payout initiated - Status: {status}, TxnID: {instantpesa_txn_id}")
+                        
+                        # Update transaction
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = %s, pg_txn_id = %s, updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (status, instantpesa_txn_id, reference_id))
+                        
+                        conn.commit()
                         
                         return jsonify({
                             'success': True,
@@ -353,6 +517,948 @@ def admin_personal_payout():
                             'message': result.get('message', 'Payout failed')
                         }), 400
                 
+                elif pg_partner_upper == 'CINORIGHT':
+                    # Use Cinoright for payout (IMPS) - Direct API call, NO wallet deduction
+                    result = cinoright_service.call_imps_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        reference_id=reference_id,
+                        amount=float(data['amount']),
+                        beneficiary_name=bank['account_holder_name'],
+                        email=email_address,
+                        phone=mobile_number
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through Cinoright
+                        # Update transaction with Cinoright response
+                        status = result.get('status', 'INITIATED')
+                        cinoright_txn_id = result.get('cinoright_txn_id', '')
+                        utr = result.get('utr')
+                        
+                        print(f"Cinoright payout initiated - Status: {status}, TxnID: {cinoright_txn_id}")
+                        
+                        # Set completed_at if status is final
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, cinoright_txn_id, utr, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, cinoright_txn_id, utr, reference_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from Cinoright API
+                        if status == 'INITIATED' and cinoright_txn_id:
+                            print(f"Checking status from Cinoright for txn_id: {cinoright_txn_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = cinoright_service.check_payout_status(cinoright_txn_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"Cinoright status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper in ['PES', 'SECTORPE']:
+                    # Use SectorPe for payout (IMPS) - Direct API call, NO wallet deduction
+                    result = sectorpe_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number,
+                        mode='IMPS'
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION
+                        status = result.get('status', 'INITIATED')
+                        
+                        print(f"SectorPe payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+                        
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        
+                        conn.commit()
+                        
+                        # Check status if INITIATED
+                        if status == 'INITIATED':
+                            print(f"Checking status from SectorPe for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)
+                            
+                            status_result = sectorpe_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"SectorPe status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper in ['MAXPE', 'NODEPAY']:
+                    # Use MaxPe or NodePay for payout (IMPS) - Direct API call, NO wallet deduction
+                    # Get the appropriate service based on pg_partner
+                    payout_service_instance = get_payout_service(pg_partner_upper)
+                    
+                    result = payout_service_instance.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through MaxPe/NodePay
+                        # Update transaction with response
+                        status = result.get('status', 'INITIATED')
+                        
+                        print(f"{pg_partner_upper} payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+                        
+                        # Set completed_at if status is final
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from {pg_partner_upper} for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = payout_service_instance.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"{pg_partner_upper} status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'NEXTPAY':
+                    # Use Nextpay for payout (IMPS) - Direct API call, NO wallet deduction
+                    # Get the appropriate service based on pg_partner
+                    payout_service_instance = nextpay_payout_service
+                    
+                    result = payout_service_instance.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through MaxPe/NodePay
+                        # Update transaction with response
+                        status = result.get('status', 'INITIATED')
+                        
+                        print(f"{pg_partner_upper} payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+                        
+                        # Set completed_at if status is final
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from {pg_partner_upper} for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = payout_service_instance.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"{pg_partner_upper} status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'TPIPAY':
+                    # Use Tpipay for payout (IMPS/NEFT) - Direct API call, NO wallet deduction
+                    result = tpipay_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number,
+                        channel_id='2'  # 2 = IMPS
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through Tpipay
+                        status = result.get('status', 'INITIATED')
+                        payid = result.get('payid', '')
+                        utr = result.get('utr', '')
+                        
+                        print(f"Tpipay payout initiated - Status: {status}, Merchant Order ID: {reference_id}, PayID: {payid}")
+                        
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, payid, utr, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, payid, utr, reference_id))
+                        
+                        conn.commit()
+                        # Note: Tpipay does not have a status-check endpoint.
+                        # Final status will be delivered via callback (webhook).
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'MAKEMYPAYMENT':
+                    result = makemypayment_payout_service.initiate_single_payout(
+                        merchant_reference_id=reference_id,
+                        account_holder=bank['account_holder_name'],
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        mobile=mobile_number,
+                        amount=str(float(data['amount'])),
+                        mode='imps',
+                        purpose='Payment',
+                        email=email_address
+                    )
+                    
+                    if result['success']:
+                        status = result.get('status', 'INITIATED')
+                        mmp_txn_id = result.get('transaction_id', '')
+                        
+                        print(f"MakeMyPayment payout initiated - Status: {status}, TxnID: {mmp_txn_id}")
+                        
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, mmp_txn_id, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, mmp_txn_id, reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        return jsonify({'success': False, 'message': result.get('message', 'Payout failed')}), 400
+                
+                elif pg_partner_upper == 'CLOCKSPAY':
+                    # Use ClocksPay for payout (IMPS) - Direct API call, NO wallet deduction
+                    result = clockspay_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        mobile=mobile_number,
+                        mode='IMPS'
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through ClocksPay
+                        # Update transaction with response
+                        status = result.get('status', 'INITIATED')
+                        
+                        print(f"ClocksPay payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+                        
+                        # Set completed_at if status is final
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, reference_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from ClocksPay for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = clockspay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"ClocksPay status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'ROCKYPAYZ':
+                    # Use RockyPayz for payout (IMPS) - Direct API call, NO wallet deduction
+                    result = rockypayz_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        mobile=mobile_number,
+                        remarks='Admin Personal Payout'
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through RockyPayz
+                        # Update transaction with response
+                        status = result.get('status', 'INITIATED')
+                        txn_id_resp = result.get('txn_id', '')
+                        utr = result.get('utr', '')
+                        
+                        print(f"RockyPayz payout initiated - Status: {status}, TXN ID: {txn_id_resp}, Merchant Order ID: {reference_id}")
+                        
+                        # Set completed_at if status is final
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, txn_id_resp, utr, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, txn_id_resp, utr, reference_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED' and txn_id_resp:
+                            print(f"Checking status from RockyPayz for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = rockypayz_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"RockyPayz status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'ALOPNA':
+                    # Use Alopna for payout (IMPS) - Direct API call, NO wallet deduction
+                    result = alopna_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number,
+                        mode='IMPS'
+                    )
+                    
+                    if result['success']:
+                        status = result.get('status', 'INITIATED')
+                        pg_txn_id_resp = result.get('alopna_txn_id', '')
+                        utr = result.get('utr', '')
+                        
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, pg_txn_id_resp, utr, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, pg_txn_id_resp, utr, reference_id))
+                        
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'RISEXPAY':
+                    # Use Risexpay for payout (IMPS)
+                    result = risexpay_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number,
+                        mode='IMPS'
+                    )
+
+                    if result['success']:
+                        status = result.get('status', 'QUEUED')
+                        pg_txn_id_resp = result.get('pg_txn_id', '')
+                        utr = result.get('utr', '')
+                        print(f"Risexpay payout initiated - Status: {status}, PG Txn ID: {pg_txn_id_resp}, Merchant Order ID: {reference_id}")
+                    else:
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'error': result.get('message')
+                        }), 400
+
+                elif pg_partner_upper == 'ORO':
+                    # Use ORO for payout
+                    oro_result = oro_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=data['amount'],
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number
+                    )
+                    
+                    if oro_result['success']:
+                        status = oro_result.get('status', 'INITIATED')
+                        pg_txn_id_resp = oro_result.get('pg_txn_id', '')
+                        utr = oro_result.get('utr', '')
+                        
+                        print(f"ORO payout initiated - Status: {status}, TxnID: {pg_txn_id_resp}")
+                        
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (status, pg_txn_id_resp, utr, reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (oro_result.get('message', 'ORO payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': oro_result.get('message', 'Payout failed')
+                        }), 400
+
+                elif pg_partner_upper == 'OQPAY':
+                    # Use OQPay for payout (IMPS) - Direct API call, NO wallet deduction
+                    result = oqpay_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number,
+                        mode='IMPS'
+                    )
+                    
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through OQPay
+                        # Update transaction with response
+                        status = result.get('status', 'INITIATED')
+                        pg_txn_id_resp = result.get('pg_txn_id', '')
+                        utr = result.get('utr', '')
+                        
+                        print(f"OQPay payout initiated - Status: {status}, PG Txn ID: {pg_txn_id_resp}, Merchant Order ID: {reference_id}")
+                        
+                        # Set completed_at if status is final
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, pg_txn_id_resp, utr, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, pg_txn_id_resp, utr, reference_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from OQPay for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = oqpay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"OQPay status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+                
+                elif pg_partner_upper == 'RISEXPAY':
+                    # Use Risexpay for payout (IMPS) - Direct API call, NO wallet deduction
+                    result = risexpay_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=float(data['amount']),
+                        payee_name=bank['account_holder_name'],
+                        email=email_address,
+                        mobile=mobile_number,
+                        mode='IMPS'
+                    )
+
+                    if result['success']:
+                        # NO WALLET DEDUCTION - Admin personal payouts go directly through Risexpay
+                        status = result.get('status', 'INITIATED')
+                        pg_txn_id_resp = result.get('pg_txn_id', '')
+                        utr = result.get('utr', '')
+
+                        print(f"Risexpay payout initiated - Status: {status}, PG TXN: {pg_txn_id_resp}, Ref: {reference_id}")
+
+                        # Set completed_at if status is final
+                        if status in ['SUCCESS', 'FAILED']:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, pg_txn_id_resp, utr, reference_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE reference_id = %s
+                            """, (status, pg_txn_id_resp, utr, reference_id))
+
+                        conn.commit()
+
+                        # If still INITIATED, do a quick status check
+                        if status == 'INITIATED' and pg_txn_id_resp:
+                            print(f"Checking status from Risexpay for reference_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+
+                            status_result = risexpay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr', '')
+
+                                print(f"Risexpay status check result - Status: {updated_status}, UTR: {updated_utr}")
+
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE reference_id = %s
+                                    """, (updated_status, updated_utr, reference_id))
+
+                                conn.commit()
+                                status = updated_status
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        # Update status to FAILED
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (result.get('message', 'Payout failed'), reference_id))
+                        conn.commit()
+
+                        return jsonify({
+                            'success': False,
+                            'message': result.get('message', 'Payout failed')
+                        }), 400
+
                 else:
                     return jsonify({
                         'success': False,
@@ -854,9 +1960,39 @@ def client_settle_fund():
                 
                 # Create payout transaction record with charges
                 # Store total_wallet_deduction as amount (what's deducted from wallet)
-                reference_id = f"SF{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
-                txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
-                order_id = f"SF{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:8].upper()}"
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                reference_id = f"SF{timestamp}{uuid.uuid4().hex[:6].upper()}"
+                
+                # Gateway-specific TXN_ID for easy identification
+                pg_partner_upper = pg_partner.upper()
+                if pg_partner_upper == 'ROCKYPAYZ':
+                    txn_id = f"RCK_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper in ['PES', 'SECTORPE']:
+                    txn_id = f"PES_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper in ['MAXPE', 'NODEPAY']:
+                    txn_id = f"MAXPE_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"NEXTPAY_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"MAXPE_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"NEXTPAY_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'TPIPAY':
+                    txn_id = f"TPI_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'MAKEMYPAYMENT':
+                    txn_id = f"MMP_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'CLOCKSPAY':
+                    txn_id = f"CLK_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'CINORIGHT':
+                    txn_id = f"CINO_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'OQPAY':
+                    txn_id = f"OQP_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'RISEXPAY':
+                    txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
+                else:
+                    txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
+                
+                order_id = f"SF{timestamp}{uuid.uuid4().hex[:8].upper()}"
                 
                 # DO NOT debit wallet yet - only debit when payout is SUCCESS
                 cursor.execute("""
@@ -1206,6 +2342,754 @@ def client_settle_fund():
                             'error': paytouch2_result.get('message')
                         }), 400
                 
+                elif pg_partner_upper == 'INSTANTPESA':
+                    # Use InstantPesa for settlement (IMPS/NEFT/RTGS)
+                    payout_data = {
+                        'amount': amount_to_bank,
+                        'account_number': bank['account_number'],
+                        'ifsc_code': bank['ifsc_code'],
+                        'bank_name': bank['bank_name'],
+                        'beneficiary_name': bank['account_holder_name'],
+                        'email': data.get('email', 'merchant@orchpay.in'),
+                        'mobile': data.get('mobile', '9999999999'),
+                        'transaction_mode': data.get('transaction_mode', 'IMPS')
+                    }
+                    
+                    instantpesa_result = instantpesa_svc.create_imps_payout(
+                        merchant_id=merchant_id,
+                        payout_data=payout_data
+                    )
+                    
+                    if instantpesa_result['success']:
+                        status = instantpesa_result.get('data', {}).get('status', 'INITIATED')
+                        instantpesa_txn_id = instantpesa_result.get('data', {}).get('transaction_id', '')
+                        
+                        print(f"InstantPesa settlement initiated - Status: {status}, TxnID: {instantpesa_txn_id}")
+                        
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_wallet_deduction,
+                                description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, instantpesa_txn_id, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, instantpesa_txn_id, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, instantpesa_txn_id, txn_id))
+                        
+                        conn.commit()
+                        conn.close()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Settlement initiated successfully' if status != 'SUCCESS' else 'Settlement completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'requested_amount': amount_to_bank,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_wallet_deduction,
+                            'amount_to_bank': amount_to_bank,
+                            'status': status,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None
+                        }), 200
+                    else:
+                        # No wallet deduction for failed transactions
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (instantpesa_result.get('message', 'InstantPesa transfer failed'), txn_id))
+                        conn.commit()
+                        
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Settlement failed',
+                            'txn_id': txn_id,
+                            'error': instantpesa_result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper == 'CINORIGHT':
+                    # Use Cinoright for settlement (IMPS)
+                    cinoright_result = cinoright_service.call_imps_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        reference_id=reference_id,
+                        amount=amount_to_bank,
+                        beneficiary_name=bank['account_holder_name'],
+                        email=data.get('email', 'merchant@orchpay.in'),
+                        phone=data.get('phone', '9999999999')
+                    )
+                    
+                    if cinoright_result['success']:
+                        status = cinoright_result.get('status', 'INITIATED')
+                        cinoright_txn_id = cinoright_result.get('cinoright_txn_id', '')
+                        utr = cinoright_result.get('utr')
+                        
+                        print(f"Cinoright settlement initiated - Status: {status}, TxnID: {cinoright_txn_id}")
+                        
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_wallet_deduction,
+                                description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, cinoright_txn_id, utr, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, cinoright_txn_id, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, cinoright_txn_id, utr, txn_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from Cinoright API
+                        if status == 'INITIATED' and cinoright_txn_id:
+                            print(f"Checking status from Cinoright for txn_id: {cinoright_txn_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = cinoright_service.check_payout_status(cinoright_txn_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"Cinoright status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_wallet_deduction,
+                                        description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        conn.close()
+                        return jsonify({
+                            'success': True,
+                            'message': 'Settlement initiated successfully' if status != 'SUCCESS' else 'Settlement completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'requested_amount': amount_to_bank,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_wallet_deduction,
+                            'amount_to_bank': amount_to_bank,
+                            'status': status,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None
+                        }), 200
+                    else:
+                        # No wallet deduction for failed transactions
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (cinoright_result.get('message', 'Cinoright transfer failed'), txn_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': 'Settlement failed',
+                            'txn_id': txn_id,
+                            'error': cinoright_result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper == 'ALOPNA':
+                    # Use Alopna for settlement (IMPS)
+                    alopna_result = alopna_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=amount_to_bank,
+                        payee_name=bank['account_holder_name'],
+                        email=data.get('email', 'merchant@orchpay.in'),
+                        mobile=data.get('mobile', '9999999999'),
+                        mode='IMPS'
+                    )
+                    
+                    if alopna_result['success']:
+                        status = alopna_result.get('status', 'INITIATED')
+                        pg_txn_id_resp = alopna_result.get('alopna_txn_id', '')
+                        utr = alopna_result.get('utr', '')
+                        
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_wallet_deduction,
+                                description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        elif status == 'FAILED':
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Settlement initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'requested_amount': amount_to_bank,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_wallet_deduction,
+                            'amount_to_bank': amount_to_bank,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (alopna_result.get('message', 'Payout failed'), txn_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': 'Settlement failed',
+                            'txn_id': txn_id,
+                            'error': alopna_result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper == 'RISEXPAY':
+
+                    # Use Risexpay for settlement (IMPS)
+                    result = risexpay_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=amount_to_bank,  # Send full requested amount to user bank
+                        payee_name=bank['account_holder_name'],
+                        email=data.get('email', 'merchant@orchpay.in'),
+                        mobile=data.get('mobile', '9999999999'),
+                        mode='IMPS'
+                    )
+                    
+                    if result['success']:
+                        status = result.get('status', 'INITIATED')
+                        pg_txn_id_resp = result.get('pg_txn_id', '')
+                        utr = result.get('utr', '')
+                        
+                        print(f"Risexpay settlement initiated - Status: {status}, TxnID: {pg_txn_id_resp}")
+                        
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_wallet_deduction,
+                                description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from Risexpay API
+                        if status == 'INITIATED':
+                            print(f"Checking status from Risexpay for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = risexpay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"Risexpay status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_wallet_deduction,
+                                        description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        conn.close()
+                        return jsonify({
+                            'success': True,
+                            'message': 'Settlement initiated successfully' if status != 'SUCCESS' else 'Settlement completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'requested_amount': amount_to_bank,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_wallet_deduction,
+                            'amount_to_bank': amount_to_bank,
+                            'status': status,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None
+                        }), 200
+                    else:
+                        # No wallet deduction for failed transactions
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (result.get('message', 'Risexpay transfer failed'), txn_id))
+                        conn.commit()
+                        
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Settlement failed',
+                            'txn_id': txn_id,
+                            'error': result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper == 'ORO':
+                    # Use ORO for settlement
+                    oro_result = oro_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=amount_to_bank,
+                        payee_name=bank['account_holder_name'],
+                        email=merchant['email'],
+                        mobile=merchant['mobile']
+                    )
+                    
+                    if oro_result['success']:
+                        status = oro_result.get('status', 'INITIATED')
+                        pg_txn_id_resp = oro_result.get('pg_txn_id', '')
+                        utr = oro_result.get('utr', '')
+                        
+                        print(f"ORO settlement initiated - Status: {status}, TxnID: {pg_txn_id_resp}")
+                        
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (status, pg_txn_id_resp, utr, reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Settlement initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE reference_id = %s
+                        """, (oro_result.get('message', 'ORO transfer failed'), reference_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': oro_result.get('message', 'Transfer failed')
+                        }), 400
+
+                elif pg_partner_upper == 'OQPAY':
+                    # Use OQPay for settlement (IMPS)
+                    oqpay_result = oqpay_payout_service.call_payout_api(
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=amount_to_bank,  # Send full requested amount to user bank
+                        payee_name=bank['account_holder_name'],
+                        email=data.get('email', 'merchant@orchpay.in'),
+                        mobile=data.get('mobile', '9999999999'),
+                        mode='IMPS'
+                    )
+                    
+                    if oqpay_result['success']:
+                        status = oqpay_result.get('status', 'INITIATED')
+                        pg_txn_id_resp = oqpay_result.get('pg_txn_id', '')
+                        utr = oqpay_result.get('utr', '')
+                        
+                        print(f"OQPay settlement initiated - Status: {status}, TxnID: {pg_txn_id_resp}")
+                        
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_wallet_deduction,
+                                description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from OQPay API
+                        if status == 'INITIATED':
+                            print(f"Checking status from OQPay for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = oqpay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"OQPay status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_wallet_deduction,
+                                        description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions 
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        conn.close()
+                        return jsonify({
+                            'success': True,
+                            'message': 'Settlement initiated successfully' if status != 'SUCCESS' else 'Settlement completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'requested_amount': amount_to_bank,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_wallet_deduction,
+                            'amount_to_bank': amount_to_bank,
+                            'status': status,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None
+                        }), 200
+                    else:
+                        # No wallet deduction for failed transactions
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (oqpay_result.get('message', 'OQPay transfer failed'), txn_id))
+                        conn.commit()
+                        
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Settlement failed',
+                            'txn_id': txn_id,
+                            'error': oqpay_result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper == 'MAKEMYPAYMENT':
+                    # Use MakeMyPayment for settlement (IMPS/NEFT)
+                    mmp_result = makemypayment_payout_service.initiate_single_payout(
+                        merchant_reference_id=reference_id,
+                        account_holder=bank['account_holder_name'],
+                        account_number=bank['account_number'],
+                        ifsc_code=bank['ifsc_code'],
+                        bank_name=bank['bank_name'],
+                        mobile=data.get('mobile', '9999999999'),
+                        amount=str(amount_to_bank),
+                        mode='IMPS',
+                        purpose='Fund Settlement',
+                        email=data.get('email', 'merchant@orchpay.in')
+                    )
+
+                    if mmp_result['success']:
+                        status = mmp_result.get('status', 'INITIATED')
+                        mmp_txn_id = mmp_result.get('transaction_id', '')
+
+                        print(f"MakeMyPayment settlement initiated - Status: {status}, TxnID: {mmp_txn_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_wallet_deduction,
+                                description=f"Settlement: ₹{amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, mmp_txn_id, txn_id))
+                        elif status == 'FAILED':
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, mmp_txn_id, txn_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, mmp_txn_id, txn_id))
+
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': True,
+                            'message': 'Settlement initiated successfully' if status != 'SUCCESS' else 'Settlement completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'requested_amount': amount_to_bank,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_wallet_deduction,
+                            'amount_to_bank': amount_to_bank,
+                            'status': status,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (mmp_result.get('message', 'Payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Settlement failed',
+                            'txn_id': txn_id,
+                            'error': mmp_result.get('message')
+                        }), 400
+
                 else:
                     # For other gateways, keep as PENDING
                     conn.close()
@@ -1507,8 +3391,37 @@ def client_direct_payout():
                 pg_partner = routing['pg_partner']
 
                 # Create payout transaction record
-                reference_id = f"DP{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
-                txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                reference_id = f"DP{timestamp}{uuid.uuid4().hex[:6].upper()}"
+                
+                # Gateway-specific TXN_ID for easy identification
+                pg_partner_upper = pg_partner.upper()
+                if pg_partner_upper == 'ROCKYPAYZ':
+                    txn_id = f"RCK_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper in ['PES', 'SECTORPE']:
+                    txn_id = f"PES_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper in ['MAXPE', 'NODEPAY']:
+                    txn_id = f"MAXPE_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"NEXTPAY_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"MAXPE_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'NEXTPAY':
+                    txn_id = f"NEXTPAY_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'TPIPAY':
+                    txn_id = f"TPI_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'MAKEMYPAYMENT':
+                    txn_id = f"MMP_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'CLOCKSPAY':
+                    txn_id = f"CLK_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'CINORIGHT':
+                    txn_id = f"CINO_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'OQPAY':
+                    txn_id = f"OQP_TXN_{uuid.uuid4().hex[:12].upper()}"
+                elif pg_partner_upper == 'RISEXPAY':
+                    txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
+                else:
+                    txn_id = f"TXN{uuid.uuid4().hex[:12].upper()}"
 
                 cursor.execute("""
                     INSERT INTO payout_transactions
@@ -1757,6 +3670,124 @@ def client_direct_payout():
                             'error': mudrape_result.get('message')
                         }), 400
 
+                elif pg_partner_upper == 'INSTANTPESA':
+                    payout_data = {
+                        'amount': net_amount_to_bank,
+                        'account_number': data['account_number'],
+                        'ifsc_code': data['ifsc_code'],
+                        'bank_name': data['bank_name'],
+                        'beneficiary_name': data['account_holder_name'],
+                        'email': bene_email or 'merchant@orchpay.in',
+                        'mobile': bene_mobile or '9999999999',
+                        'transaction_mode': payment_type
+                    }
+                    
+                    instantpesa_result = instantpesa_svc.create_imps_payout(
+                        merchant_id=merchant_id,
+                        payout_data=payout_data
+                    )
+
+                    if instantpesa_result['success']:
+                        status = instantpesa_result.get('data', {}).get('status', 'INITIATED')
+                        instantpesa_txn_id = instantpesa_result.get('data', {}).get('transaction_id', '')
+
+                        print(f"InstantPesa payout initiated - Status: {status}, TxnID: {instantpesa_txn_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, instantpesa_txn_id, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, instantpesa_txn_id, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, instantpesa_txn_id, txn_id))
+
+                        conn.commit()
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (instantpesa_result.get('message', 'InstantPesa payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': instantpesa_result.get('message')
+                        }), 400
+
                 elif pg_partner_upper == 'PAYTOUCH':
                     # Use PayTouch for payout
                     # PayTouch requirements: request_id=order_id, currency=INR, narration=Truaxis, payment_mode=IMPS, bank_branch=oooo
@@ -1919,6 +3950,1566 @@ def client_direct_payout():
                             'error': paytouch2_result.get('message')
                         }), 400
 
+                elif pg_partner_upper == 'CINORIGHT':
+                    # Use Cinoright for payout (IMPS)
+                    cinoright_result = cinoright_service.call_imps_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        reference_id=reference_id,
+                        amount=net_amount_to_bank,
+                        beneficiary_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        phone=bene_mobile or '9999999999'
+                    )
+
+                    if cinoright_result['success']:
+                        status = cinoright_result.get('status', 'INITIATED')
+                        cinoright_txn_id = cinoright_result.get('cinoright_txn_id', '')
+                        utr = cinoright_result.get('utr')
+
+                        print(f"Cinoright payout initiated - Status: {status}, TxnID: {cinoright_txn_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{net_amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, cinoright_txn_id, utr, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, cinoright_txn_id, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, cinoright_txn_id, utr, txn_id))
+
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from Cinoright API
+                        if status == 'INITIATED' and cinoright_txn_id:
+                            print(f"Checking status from Cinoright for txn_id: {cinoright_txn_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = cinoright_service.check_payout_status(cinoright_txn_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"Cinoright status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{net_amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (cinoright_result.get('message', 'Cinoright payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': cinoright_result.get('message')
+                        }), 400
+
+                elif pg_partner_upper in ['PES', 'SECTORPE']:
+                    # Use SectorPe for payout (IMPS)
+                    sectorpe_result = sectorpe_payout_service.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,
+                        payee_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        mobile=bene_mobile or '9999999999',
+                        mode='IMPS'
+                    )
+
+                    if sectorpe_result['success']:
+                        status = sectorpe_result.get('status', 'INITIATED')
+
+                        print(f"SectorPe payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        elif status == 'FAILED':
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+
+                        conn.commit()
+                        
+                        if status == 'INITIATED':
+                            print(f"Checking status from SectorPe for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)
+                            
+                            status_result = sectorpe_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"SectorPe status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (sectorpe_result.get('message', 'SectorPe payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': sectorpe_result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper in ['MAXPE', 'NODEPAY']:
+                    # Use MaxPe or NodePay for payout (IMPS)
+                    # Get the appropriate service based on pg_partner
+                    payout_service_instance = get_payout_service(pg_partner_upper)
+                    
+                    maxpe_result = payout_service_instance.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,
+                        payee_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        mobile=bene_mobile or '9999999999'
+                    )
+
+                    if maxpe_result['success']:
+                        status = maxpe_result.get('status', 'INITIATED')
+
+                        print(f"{pg_partner_upper} payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from {pg_partner_upper} for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = payout_service_instance.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"{pg_partner_upper} status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (maxpe_result.get('message', 'MaxPe payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': maxpe_result.get('message')
+                        }), 400
+
+                elif pg_partner_upper == 'NEXTPAY':
+                    # Use Nextpay for payout (IMPS)
+                    # Get the appropriate service based on pg_partner
+                    payout_service_instance = nextpay_payout_service
+                    
+                    maxpe_result = payout_service_instance.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,
+                        payee_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        mobile=bene_mobile or '9999999999'
+                    )
+
+                    if maxpe_result['success']:
+                        status = maxpe_result.get('status', 'INITIATED')
+
+                        print(f"{pg_partner_upper} payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from {pg_partner_upper} for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = payout_service_instance.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"{pg_partner_upper} status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (maxpe_result.get('message', 'MaxPe payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': maxpe_result.get('message')
+                        }), 400
+
+                elif pg_partner_upper == 'TPIPAY':
+                    # Use Tpipay for payout (IMPS/NEFT)
+                    tpipay_result = tpipay_payout_service.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,
+                        payee_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        mobile=bene_mobile or '9999999999',
+                        channel_id='2'  # 2 = IMPS
+                    )
+
+                    if tpipay_result['success']:
+                        status = tpipay_result.get('status', 'INITIATED')
+                        payid = tpipay_result.get('payid', '')
+                        utr = tpipay_result.get('utr', '')
+
+                        print(f"Tpipay payout initiated - Status: {status}, Merchant Order ID: {reference_id}, PayID: {payid}")
+
+                        # Deduct wallet ONLY if status is SUCCESS (pending goes via callback)
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, payid, utr, txn_id))
+                        elif status == 'FAILED':
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, payid, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED – wallet will be deducted via callback when SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, payid, utr, txn_id))
+
+                        conn.commit()
+                        # Note: Tpipay delivers final status via callback – no status-check endpoint.
+
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is confirmed via callback' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (tpipay_result.get('message', 'Tpipay payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': tpipay_result.get('message')
+                        }), 400
+
+                elif pg_partner_upper == 'MAKEMYPAYMENT':
+                    mmp_result = makemypayment_payout_service.initiate_single_payout(
+                        merchant_reference_id=reference_id,
+                        account_holder=data['account_holder_name'],
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        mobile=bene_mobile or '9999999999',
+                        amount=str(net_amount_to_bank),
+                        mode=payment_type,
+                        purpose=purpose,
+                        email=bene_email or 'merchant@orchpay.in'
+                    )
+
+                    if mmp_result['success']:
+                        status = mmp_result.get('status', 'INITIATED')
+                        mmp_txn_id = mmp_result.get('transaction_id', '')
+
+                        print(f"MakeMyPayment payout initiated - Status: {status}, Merchant Order ID: {reference_id}, TxnID: {mmp_txn_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS (pending goes via callback)
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, mmp_txn_id, txn_id))
+                        elif status == 'FAILED':
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, mmp_txn_id, txn_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, mmp_txn_id, txn_id))
+
+                        conn.commit()
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is confirmed via callback' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (mmp_result.get('message', 'Payout failed'), txn_id))
+                        conn.commit()
+                        
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': mmp_result.get('message')
+                        }), 400
+
+                elif pg_partner_upper == 'CLOCKSPAY':
+                    # Use ClocksPay for payout (IMPS)
+                    clockspay_result = clockspay_payout_service.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,
+                        payee_name=data['account_holder_name'],
+                        mobile=bene_mobile or '9999999999',
+                        mode='IMPS'
+                    )
+
+                    if clockspay_result['success']:
+                        status = clockspay_result.get('status', 'INITIATED')
+
+                        print(f"ClocksPay payout initiated - Status: {status}, Merchant Order ID: {reference_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, txn_id))
+
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from ClocksPay for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = clockspay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"ClocksPay status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                'name': data['account_holder_name'],
+                                'account_number': data['account_number'],
+                                'ifsc_code': data['ifsc_code'],
+                                'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (clockspay_result.get('message', 'ClocksPay payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': clockspay_result.get('message')
+                        }), 400
+
+                elif pg_partner_upper == 'ALOPNA':
+                    # Use Alopna for payout (IMPS)
+                    alopna_result = alopna_service.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,
+                        payee_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        mobile=bene_mobile or '9999999999',
+                        mode='IMPS'
+                    )
+                    
+                    if alopna_result['success']:
+                        status = alopna_result.get('status', 'INITIATED')
+                        pg_txn_id_resp = alopna_result.get('alopna_txn_id', '')
+                        utr = alopna_result.get('utr', '')
+                        
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_wallet_deduction,
+                                description=f"Payout: ₹{net_amount_to_bank:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        elif status == 'FAILED':
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        else:
+                            cursor.execute("""
+                                UPDATE payout_transactions 
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'requested_amount': net_amount_to_bank,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_wallet_deduction,
+                            'status': status
+                        }), 200
+                    else:
+                        cursor.execute("""
+                            UPDATE payout_transactions 
+                            SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (alopna_result.get('message', 'Payout failed'), txn_id))
+                        conn.commit()
+                        
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': alopna_result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper == 'RISEXPAY':
+
+                    # Use Risexpay for payout (IMPS)
+                    result = risexpay_payout_service.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,  # Send full net amount to user bank
+                        payee_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        mobile=bene_mobile or '9999999999',
+                        mode='IMPS'
+                    )
+
+                    if result['success']:
+                        status = result.get('status', 'INITIATED')
+                        pg_txn_id_resp = result.get('pg_txn_id', '')
+                        utr = result.get('utr', '')
+
+                        print(f"Risexpay payout initiated - Status: {status}, PG Txn ID: {pg_txn_id_resp}, Merchant Order ID: {reference_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from Risexpay for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = risexpay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"Risexpay status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                    'name': data['account_holder_name'],
+                                    'account_number': data['account_number'],
+                                    'ifsc_code': data['ifsc_code'],
+                                    'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (result.get('message', 'Risexpay payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': result.get('message')
+                        }), 400
+                
+                elif pg_partner_upper == 'ORO':
+                    # Use ORO for payout
+                    oro_result = oro_payout_service.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data.get('bank_name', ''),
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,
+                        payee_name=data.get('account_holder_name', ''),
+                        email=bene_email or merchant.get('email', ''),
+                        mobile=bene_mobile or merchant.get('mobile', '')
+                    )
+                    
+                    if oro_result['success']:
+                        status = oro_result.get('status', 'INITIATED')
+                        pg_txn_id_resp = oro_result.get('pg_txn_id', '')
+                        utr = oro_result.get('utr', '')
+                        
+                        print(f"ORO payout initiated - Status: {status}, PG Txn ID: {pg_txn_id_resp}, Merchant Order ID: {reference_id}")
+                        
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from ORO for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = oro_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"ORO status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                    'name': data['account_holder_name'],
+                                    'account_number': data['account_number'],
+                                    'ifsc_code': data['ifsc_code'],
+                                    'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (oro_result.get('message', 'ORO payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': oro_result.get('message')
+                        }), 400
+
+                elif pg_partner_upper == 'OQPAY':
+                    # Use OQPay for payout (IMPS)
+                    oqpay_result = oqpay_payout_service.call_payout_api(
+                        account_number=data['account_number'],
+                        ifsc_code=data['ifsc_code'],
+                        bank_name=data['bank_name'],
+                        merchant_order_id=reference_id,
+                        amount=net_amount_to_bank,  # Send full net amount to user bank
+                        payee_name=data['account_holder_name'],
+                        email=bene_email or 'merchant@orchpay.in',
+                        mobile=bene_mobile or '9999999999',
+                        mode='IMPS'
+                    )
+
+                    if oqpay_result['success']:
+                        status = oqpay_result.get('status', 'INITIATED')
+                        pg_txn_id_resp = oqpay_result.get('pg_txn_id', '')
+                        utr = oqpay_result.get('utr', '')
+
+                        print(f"OQPay payout initiated - Status: {status}, PG Txn ID: {pg_txn_id_resp}, Merchant Order ID: {reference_id}")
+
+                        # Deduct wallet ONLY if status is SUCCESS
+                        if status == 'SUCCESS':
+                            debit_result = wallet_svc.debit_merchant_wallet(
+                                merchant_id=merchant_id,
+                                amount=total_deduction,
+                                description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                reference_id=txn_id
+                            )
+                            
+                            if not debit_result['success']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions
+                                    SET status = 'FAILED', error_message = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (f"Wallet deduction failed: {debit_result['message']}", txn_id))
+                                conn.commit()
+                                conn.close()
+                                return jsonify({
+                                    'success': False,
+                                    'message': f"Payout succeeded but wallet deduction failed: {debit_result['message']}",
+                                    'txn_id': txn_id
+                                }), 500
+                            
+                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                            
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        elif status == 'FAILED':
+                            # No wallet deduction for failed transactions
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+                        else:
+                            # PENDING/INITIATED - wallet will be deducted later when status becomes SUCCESS
+                            cursor.execute("""
+                                UPDATE payout_transactions
+                                SET status = %s, pg_txn_id = %s, utr = %s, updated_at = NOW()
+                                WHERE txn_id = %s
+                            """, (status, pg_txn_id_resp, utr, txn_id))
+
+                        conn.commit()
+                        
+                        # If status is still INITIATED (pending), check status from API
+                        if status == 'INITIATED':
+                            print(f"Checking status from OQPay for merchant_order_id: {reference_id}")
+                            import time
+                            time.sleep(2)  # Wait 2 seconds before checking
+                            
+                            status_result = oqpay_payout_service.check_payout_status(reference_id)
+                            if status_result.get('success'):
+                                updated_status = status_result.get('status', 'INITIATED')
+                                updated_utr = status_result.get('utr')
+                                
+                                print(f"OQPay status check result - Status: {updated_status}, UTR: {updated_utr}")
+                                
+                                # Deduct wallet if status changed to SUCCESS
+                                if updated_status == 'SUCCESS' and status != 'SUCCESS':
+                                    debit_result = wallet_svc.debit_merchant_wallet(
+                                        merchant_id=merchant_id,
+                                        amount=total_deduction,
+                                        description=f"Payout: ₹{amount:.2f} + Charges: ₹{charges['charge_amount']:.2f}",
+                                        reference_id=txn_id
+                                    )
+                                    
+                                    if debit_result['success']:
+                                        print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                
+                                # Update with latest status
+                                if updated_status in ['SUCCESS', 'FAILED']:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                else:
+                                    cursor.execute("""
+                                        UPDATE payout_transactions
+                                        SET status = %s, utr = %s, updated_at = NOW()
+                                        WHERE txn_id = %s
+                                    """, (updated_status, updated_utr, txn_id))
+                                
+                                conn.commit()
+                                status = updated_status
+                        
+                        # Get current wallet balance
+                        cursor.execute("""
+                            SELECT settled_balance, unsettled_balance
+                            FROM merchant_wallet
+                            WHERE merchant_id = %s
+                        """, (merchant_id,))
+                        current_wallet = cursor.fetchone()
+                        current_balance = float(current_wallet['settled_balance']) if current_wallet else 0.00
+                        
+                        conn.close()
+
+                        return jsonify({
+                            'success': True,
+                            'message': 'Payout initiated successfully' if status != 'SUCCESS' else 'Payout completed successfully',
+                            'txn_id': txn_id,
+                            'reference_id': reference_id,
+                            'order_id': data['order_id'],
+                            'requested_amount': amount,
+                            'charges': charges['charge_amount'],
+                            'total_to_deduct': total_deduction,
+                            'amount_to_beneficiary': net_amount_to_bank,
+                            'status': status,
+                            'wallet_balance': current_balance,
+                            'note': 'Wallet will be deducted when payout is successful' if status not in ['SUCCESS', 'FAILED'] else None,
+                            'beneficiary': {
+                                    'name': data['account_holder_name'],
+                                    'account_number': data['account_number'],
+                                    'ifsc_code': data['ifsc_code'],
+                                    'bank_name': data['bank_name']
+                            }
+                        }), 200
+                    else:
+                        # No wallet deduction happened, so no refund needed
+                        cursor.execute("""
+                            UPDATE payout_transactions
+                            SET status = 'FAILED', error_message = %s, updated_at = NOW()
+                            WHERE txn_id = %s
+                        """, (oqpay_result.get('message', 'OQPay payout failed'), txn_id))
+                        conn.commit()
+
+                        conn.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Payout failed',
+                            'txn_id': txn_id,
+                            'error': oqpay_result.get('message')
+                        }), 400
+                
                 else:
                     conn.close()
                     return jsonify({
@@ -2692,7 +6283,7 @@ def get_client_payout_report():
                     'payment_type': payout['payment_type'],
                     'purpose': payout['purpose'],
                     'status': payout['status'],
-                    'pg_partner': payout['pg_partner'],
+                    'pg_partner': 'XES' if payout['pg_partner'] == 'RISEXPAY' else payout['pg_partner'],
                     'pg_txn_id': payout['pg_txn_id'],
                     'bank_ref_no': payout['bank_ref_no'],
                     'utr': payout['utr'],
@@ -2834,7 +6425,7 @@ def get_client_payout_report_all():
                     'payment_type': payout['payment_type'],
                     'purpose': payout['purpose'],
                     'status': payout['status'],
-                    'pg_partner': payout['pg_partner'],
+                    'pg_partner': 'XES' if payout['pg_partner'] == 'RISEXPAY' else payout['pg_partner'],
                     'pg_txn_id': payout['pg_txn_id'],
                     'bank_ref_no': payout['bank_ref_no'],
                     'utr': payout['utr'],
@@ -2941,7 +6532,7 @@ def get_client_payout_report_today():
                     'payment_type': payout['payment_type'],
                     'purpose': payout['purpose'],
                     'status': payout['status'],
-                    'pg_partner': payout['pg_partner'],
+                    'pg_partner': 'XES' if payout['pg_partner'] == 'RISEXPAY' else payout['pg_partner'],
                     'pg_txn_id': payout['pg_txn_id'],
                     'bank_ref_no': payout['bank_ref_no'],
                     'utr': payout['utr'],
@@ -3046,7 +6637,7 @@ def client_check_payout_status(txn_id):
                         'paytouch2_utr': paytouch2_utr,  # Live PayTouch2 UTR
                         'pg_txn_id': txn['pg_txn_id'],
                         'paytouch2_txn_id': paytouch2_txn_id,  # Live PayTouch2 transaction ID
-                        'pg_partner': txn['pg_partner'],
+                        'pg_partner': 'XES' if txn['pg_partner'] == 'RISEXPAY' else txn['pg_partner'],
                         'created_at': txn['created_at'].strftime('%Y-%m-%d %H:%M:%S') if txn['created_at'] else None,
                         'completed_at': txn['completed_at'].strftime('%Y-%m-%d %H:%M:%S') if txn['completed_at'] else None,
                         'note': 'PayTouch2 status is read-only. Database updates happen via callback or cron job.'
@@ -3055,6 +6646,16 @@ def client_check_payout_status(txn_id):
                 
             elif txn['pg_partner'] == 'TourQuest':
                 status_result = tourquest_service.check_payout_status(txn['reference_id'])
+            elif txn['pg_partner'] == 'MAKEMYPAYMENT':
+                status_result = makemypayment_payout_service.check_payout_status(merchant_reference_id=txn['reference_id'])
+            elif txn['pg_partner'] in ['MAXPE', 'NODEPAY']:
+                # Import get_payout_service inline if not already imported, but it usually is
+                try:
+                    from payout_routes import get_payout_service
+                except ImportError:
+                    pass
+                payout_service_instance = get_payout_service(txn['pg_partner'])
+                status_result = payout_service_instance.check_payout_status(merchant_order_id=txn['reference_id'])
             else:
                 conn.close()
                 return jsonify({
@@ -3643,3 +7244,194 @@ def list_payu_transfers():
 
 
 # Client Direct Payout (with bank details in request)
+
+
+# ============================================================================
+# MERCHANT PAYOUT STATUS CHECK API WITH CLIENT ORDER ID
+# ============================================================================
+
+@payout_bp.route('/client/check-status-by-order-id/<order_id>', methods=['GET'])
+@jwt_required()
+def check_payout_status_by_order_id(order_id):
+    """
+    Check payout status by client order ID
+    
+    Merchant must be logged in and can only check their own transactions
+    
+    Example:
+    GET /api/payout/client/check-status-by-order-id/ORDER12345
+    Header: Authorization: Bearer <token>
+    
+    Response:
+    {
+        "success": true,
+        "message": "Payout status retrieved successfully",
+        "data": {
+            "order_id": "ORDER12345",
+            "reference_id": "DP2026040221520368FF8E",
+            "txn_id": "TXN5074C9A5A1B5",
+            "amount": 2015.0,
+            "status": "SUCCESS",
+            "pg_partner": "Pg",
+            "utr": "609221495505",
+            "created_at": "2026-04-02 21:52:03",
+            "completed_at": "2026-04-02 21:57:23"
+        }
+    }
+    """
+    try:
+        # Get merchant ID from JWT token
+        merchant_id = get_jwt_identity()
+        print(f"DEBUG: Checking payout status for merchant_id={merchant_id}, order_id={order_id}")
+        
+        if not order_id:
+            return jsonify({
+                'success': False,
+                'message': 'Order ID is required'
+            }), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            print("ERROR: Database connection failed")
+            return jsonify({
+                'success': False,
+                'message': 'Database connection failed'
+            }), 500
+        
+        try:
+            with conn.cursor() as cursor:
+                # Query payout transaction by order_id and merchant_id
+                query = """
+                    SELECT 
+                        order_id,
+                        reference_id,
+                        txn_id,
+                        amount,
+                        status,
+                        pg_partner,
+                        utr,
+                        DATE_FORMAT(created_at, '%%Y-%%m-%%d %%H:%%i:%%s') as created_at,
+                        DATE_FORMAT(completed_at, '%%Y-%%m-%%d %%H:%%i:%%s') as completed_at
+                    FROM payout_transactions
+                    WHERE order_id = %s AND merchant_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """
+                print(f"DEBUG: Executing query with order_id={order_id}, merchant_id={merchant_id}")
+                cursor.execute(query, (order_id, merchant_id))
+                
+                transaction = cursor.fetchone()
+                print(f"DEBUG: Query result: {transaction}")
+                
+                if not transaction:
+                    print(f"WARNING: Transaction not found for order_id={order_id}, merchant_id={merchant_id}")
+                    return jsonify({
+                        'success': False,
+                        'message': 'Transaction not found'
+                    }), 404
+                
+                # Live Status Check for MAKEMYPAYMENT and MAXPE
+                status_result = {}
+                if transaction['pg_partner'].upper() == 'MAKEMYPAYMENT':
+                    print(f"DEBUG: Performing live status check for MAKEMYPAYMENT order {order_id}")
+                    status_result = makemypayment_payout_service.check_payout_status(merchant_reference_id=transaction['reference_id'])
+                elif transaction['pg_partner'].upper() in ['MAXPE', 'NODEPAY']:
+                    print(f"DEBUG: Performing live status check for {transaction['pg_partner']} order {order_id}")
+                    try:
+                        from payout_routes import get_payout_service
+                    except ImportError:
+                        pass
+                    payout_service_instance = get_payout_service(transaction['pg_partner'].upper())
+                    status_result = payout_service_instance.check_payout_status(merchant_order_id=transaction['reference_id'])
+                    
+                if status_result.get('success'):
+                        new_status = status_result.get('status', 'INITIATED')
+                        utr = status_result.get('utr')
+                        
+                        # Only update if status changed or new UTR arrived
+                        if new_status != transaction['status'] or (utr and utr != transaction['utr']):
+                            import datetime
+                            if new_status in ['SUCCESS', 'FAILED'] and transaction['status'] not in ['SUCCESS', 'FAILED']:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = %s, utr = %s, completed_at = NOW(), updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (new_status, utr, transaction['txn_id']))
+                                transaction['completed_at'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                
+                                # Deduct wallet if status transitioned to SUCCESS
+                                if new_status == 'SUCCESS' and merchant_id:
+                                    print("=" * 80)
+                                    print("WALLET DEDUCTION - SUCCESS STATUS (MAKEMYPAYMENT Live Check)")
+                                    print("=" * 80)
+                                    
+                                    cursor.execute("""
+                                        SELECT COUNT(*) as count FROM merchant_wallet_transactions
+                                        WHERE reference_id = %s AND txn_type = 'DEBIT'
+                                    """, (transaction['txn_id'],))
+                                    
+                                    already_debited = cursor.fetchone()['count'] > 0
+                                    
+                                    if already_debited:
+                                        print(f"⚠ Wallet already debited for this transaction - skipping")
+                                    else:
+                                        import wallet_service
+                                        wallet_svc = wallet_service.wallet_service
+                                        
+                                        debit_result = wallet_svc.debit_merchant_wallet(
+                                            merchant_id=merchant_id,
+                                            amount=float(transaction['amount']) if transaction.get('amount') else 0,
+                                            description=f"Payout completed (MAKEMYPAYMENT) - Ref: {transaction['reference_id']}",
+                                            reference_id=transaction['txn_id']
+                                        )
+                                        
+                                        if debit_result['success']:
+                                            print(f"✅ WALLET DEBITED - Balance: ₹{debit_result['balance_before']:.2f} → ₹{debit_result['balance_after']:.2f}")
+                                        else:
+                                            print(f"❌ WALLET DEDUCTION FAILED: {debit_result['message']}")
+                            else:
+                                cursor.execute("""
+                                    UPDATE payout_transactions 
+                                    SET status = %s, utr = %s, updated_at = NOW()
+                                    WHERE txn_id = %s
+                                """, (new_status, utr, transaction['txn_id']))
+                            conn.commit()
+                            
+                            # Update local dict so the response uses new data
+                            transaction['status'] = new_status
+                            if utr:
+                                transaction['utr'] = utr
+                
+                # Format response data
+                response_data = {
+                    'order_id': transaction['order_id'],
+                    'reference_id': transaction['reference_id'],
+                    'txn_id': transaction['txn_id'],
+                    'amount': float(transaction['amount']),
+                    'status': transaction['status'],
+                    'pg_partner': transaction['pg_partner'],
+                    'utr': transaction['utr'] if transaction['utr'] else None,
+                    'created_at': transaction['created_at'],
+                    'completed_at': transaction['completed_at'] if transaction['completed_at'] else None
+                }
+                
+                print(f"SUCCESS: Returning payout status for order_id={order_id}")
+                return jsonify({
+                    'success': True,
+                    'message': 'Payout status retrieved successfully',
+                    'data': response_data
+                }), 200
+                
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"ERROR: Check payout status error: {e}")
+        print(f"ERROR: Traceback: {error_trace}")
+        return jsonify({
+            'success': False,
+            'message': 'Internal server error',
+            'error': str(e)
+        }), 500

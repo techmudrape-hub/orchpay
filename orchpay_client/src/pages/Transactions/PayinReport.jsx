@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { Search, Download, RefreshCw, Eye } from 'lucide-react';
+import { Download, RefreshCw, Eye } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,7 @@ export default function PayinReport() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [selectedTxn, setSelectedTxn] = useState(null);
+  const [downloading, setDownloading] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [pagination, setPagination] = useState({
     page: 1,
@@ -131,31 +132,175 @@ export default function PayinReport() {
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
-  const exportToCSV = () => {
-    const headers = ['Transaction ID', 'Order ID', 'Amount', 'Charge', 'Net Amount', 'Status', 'Payment Mode', 'Date'];
-    const rows = filteredTransactions.map(txn => [
-      txn.txn_id,
-      txn.order_id,
-      txn.amount,
-      txn.charge_amount,
-      txn.net_amount,
-      txn.status,
-      txn.payment_mode || '-',
-      formatDate(txn.created_at)
-    ]);
+  const exportAllToCSV = async () => {
+    try {
+      setDownloading(true);
+      const params = {};
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.join(','))
-    ].join('\n');
+      if (statusFilter) {
+        params.status = statusFilter;
+      }
+      if (searchTerm) {
+        params.search = searchTerm;
+      }
+      if (fromDate) {
+        params.from_date = fromDate;
+      }
+      if (toDate) {
+        params.to_date = toDate;
+      }
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `payin-report-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
+      const response = await clientAPI.getAllPayinTransactions(params);
+      
+      if (response.success) {
+        const headers = ['Transaction ID', 'Order ID', 'Amount', 'Charge', 'Net Amount', 'Status', 'Payment Mode', 'Customer Name', 'Customer Mobile', 'UTR', 'Date', 'Completed Date'];
+        const rows = response.transactions.map(txn => [
+          txn.txn_id,
+          txn.order_id,
+          txn.amount,
+          txn.charge_amount,
+          txn.net_amount,
+          txn.status,
+          txn.payment_mode || '-',
+          txn.payee_name || '-',
+          txn.payee_mobile || '-',
+          txn.utr || txn.bank_ref_no || '-',
+          formatDate(txn.created_at),
+          formatDate(txn.completed_at)
+        ]);
+
+        const csvContent = [
+          headers.join(','),
+          ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `payin-report-all-${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        
+        toast.success(`Downloaded ${response.transactions.length} transactions`);
+      }
+    } catch (error) {
+      toast.error('Failed to download all report');
+      console.error(error);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const exportFilteredToCSV = async () => {
+    try {
+      setDownloading(true);
+      
+      const hasFilters = statusFilter || searchTerm || fromDate || toDate;
+      
+      if (!hasFilters) {
+        toast.info('No filters applied. Use "Export All" to download all transactions.');
+        setDownloading(false);
+        return;
+      }
+
+      const params = {};
+      if (statusFilter) {
+        params.status = statusFilter;
+      }
+      if (searchTerm) {
+        params.search = searchTerm;
+      }
+      if (fromDate) {
+        params.from_date = fromDate;
+      }
+      if (toDate) {
+        params.to_date = toDate;
+      }
+
+      const response = await clientAPI.getAllPayinTransactions(params);
+      
+      if (response.success) {
+        const headers = ['Transaction ID', 'Order ID', 'Amount', 'Charge', 'Net Amount', 'Status', 'Payment Mode', 'Customer Name', 'Customer Mobile', 'UTR', 'Date', 'Completed Date'];
+        const rows = response.transactions.map(txn => [
+          txn.txn_id,
+          txn.order_id,
+          txn.amount,
+          txn.charge_amount,
+          txn.net_amount,
+          txn.status,
+          txn.payment_mode || '-',
+          txn.payee_name || '-',
+          txn.payee_mobile || '-',
+          txn.utr || txn.bank_ref_no || '-',
+          formatDate(txn.created_at),
+          formatDate(txn.completed_at)
+        ]);
+
+        const csvContent = [
+          headers.join(','),
+          ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `payin-report-filtered-${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        
+        toast.success(`Downloaded ${response.transactions.length} filtered transactions`);
+      }
+    } catch (error) {
+      toast.error('Failed to download filtered report');
+      console.error(error);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const exportTodayToCSV = async () => {
+    try {
+      setDownloading(true);
+      const response = await clientAPI.getTodayPayinTransactions();
+      
+      if (response.success) {
+        const headers = ['Transaction ID', 'Order ID', 'Amount', 'Charge', 'Net Amount', 'Status', 'Payment Mode', 'Customer Name', 'Customer Mobile', 'UTR', 'Date', 'Completed Date'];
+        const rows = response.transactions.map(txn => [
+          txn.txn_id,
+          txn.order_id,
+          txn.amount,
+          txn.charge_amount,
+          txn.net_amount,
+          txn.status,
+          txn.payment_mode || '-',
+          txn.payee_name || '-',
+          txn.payee_mobile || '-',
+          txn.utr || txn.bank_ref_no || '-',
+          formatDate(txn.created_at),
+          formatDate(txn.completed_at)
+        ]);
+
+        const csvContent = [
+          headers.join(','),
+          ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const today = new Date().toISOString().split('T')[0];
+        a.download = `payin-report-today-${today}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        
+        toast.success(`Downloaded ${response.transactions.length} today's transactions`);
+      }
+    } finally {
+      setDownloading(false);
+    }
   };
 
   if (loading && transactions.length === 0) {
@@ -176,13 +321,17 @@ export default function PayinReport() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchTransactions}>
+          <Button variant="outline" onClick={fetchTransactions} disabled={loading}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
           </Button>
-          <Button onClick={exportToCSV}>
+          <Button onClick={exportTodayToCSV} disabled={loading}>
             <Download className="w-4 h-4 mr-2" />
-            Export CSV
+            Today's Report
+          </Button>
+          <Button onClick={exportAllToCSV} disabled={loading}>
+            <Download className="w-4 h-4 mr-2" />
+            {statusFilter || searchTerm || fromDate || toDate ? 'Filtered Report' : 'All Report'}
           </Button>
         </div>
       </div>
@@ -224,7 +373,7 @@ export default function PayinReport() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <Input
                 placeholder="Search by TXN ID, Order ID, Mobile..."
@@ -250,7 +399,38 @@ export default function PayinReport() {
                 <option value="CANCELLED">Cancelled</option>
               </select>
             </div>
+            <div>
+              <Input
+                type="date"
+                placeholder="From Date"
+                value={fromDate}
+                onChange={(e) => {
+                  setFromDate(e.target.value);
+                  setPagination(prev => ({ ...prev, page: 1 }));
+                }}
+                className="w-full"
+              />
+            </div>
+            <div>
+              <Input
+                type="date"
+                placeholder="To Date"
+                value={toDate}
+                onChange={(e) => {
+                  setToDate(e.target.value);
+                  setPagination(prev => ({ ...prev, page: 1 }));
+                }}
+                className="w-full"
+              />
+            </div>
           </div>
+          {(statusFilter || searchTerm || fromDate || toDate) && (
+            <div className="mt-4">
+              <Button variant="outline" onClick={handleClearFilters}>
+                Clear Filters
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -271,6 +451,7 @@ export default function PayinReport() {
                   <TableHead>Charge</TableHead>
                   <TableHead>Net Amount</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>UTR</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Action</TableHead>
                 </TableRow>
@@ -278,7 +459,7 @@ export default function PayinReport() {
               <TableBody>
                 {filteredTransactions.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-gray-500">
+                    <TableCell colSpan={10} className="text-center py-8 text-gray-500">
                       No transactions found
                     </TableCell>
                   </TableRow>
@@ -301,6 +482,9 @@ export default function PayinReport() {
                         {formatAmount(txn.net_amount)}
                       </TableCell>
                       <TableCell>{getStatusBadge(txn.status)}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {txn.utr || txn.bank_ref_no || '-'}
+                      </TableCell>
                       <TableCell className="text-sm">{formatDate(txn.created_at)}</TableCell>
                       <TableCell>
                         <Button

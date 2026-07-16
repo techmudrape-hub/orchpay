@@ -12,15 +12,15 @@ import { usePageTitle } from '@/hooks/usePageTitle'
 export default function Login() {
   usePageTitle('Admin Login');
   const navigate = useNavigate()
-  const [credentials, setCredentials] = useState({ 
-    adminId: '', 
+  const [credentials, setCredentials] = useState({
+    adminId: '',
     password: ''
   })
   const [loading, setLoading] = useState(false)
 
   const handleLogin = async (e) => {
     e.preventDefault()
-    
+
     if (!credentials.adminId || !credentials.password) {
       toast.error('Please fill all fields')
       return
@@ -57,11 +57,11 @@ export default function Login() {
               </div>
               <span className="text-white font-semibold text-lg">Admin Portal</span>
             </div>
-            
+
             <div className="inline-block bg-white rounded-2xl p-4 mb-6 shadow-xl">
               <img src="/orchpay_logo.png" alt="OrchPay" className="h-12" />
             </div>
-            
+
             <h1 className="text-3xl font-bold text-white mb-3 leading-tight">
               Powerful Admin
               <br />
@@ -183,9 +183,9 @@ export default function Login() {
 
               <div className="flex items-center justify-between pt-1">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="w-3.5 h-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer" 
+                  <input
+                    type="checkbox"
+                    className="w-3.5 h-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
                     disabled={loading}
                   />
                   <span className="text-xs text-gray-600 font-medium">
@@ -194,8 +194,8 @@ export default function Login() {
                 </label>
               </div>
 
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={loading}
                 className="w-full h-10 orchpay-gradient-btn text-white font-semibold text-sm rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 mt-5"
               >

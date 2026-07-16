@@ -30,7 +30,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 CORS(app, 
      origins=Config.CORS_ORIGINS,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-Auth-Key", "X-Authorization-Key", "X-Module-Secret"],
      expose_headers=["Content-Type", "Authorization"],
      supports_credentials=Config.CORS_ALLOW_CREDENTIALS,
      max_age=3600)
@@ -42,6 +42,7 @@ from payin_routes import payin_bp
 from mudrape_routes import mudrape_bp
 from mudrape_payout_routes import mudrape_payout_bp
 from mudrape_callback_routes import mudrape_callback_bp
+from moneyone_callback_routes import moneyone_callback_bp
 from airpay_routes import airpay_bp
 from airpay_callback_routes import airpay_callback_bp
 from paytouchpayin_routes import paytouchpayin_bp
@@ -56,6 +57,35 @@ from rang_routes import rang_bp
 from rang_callback_routes import rang_callback_bp
 from viyonapay_routes import viyonapay_bp
 from viyonapay_callback_routes import viyonapay_callback_bp
+from instantpesa_callback_routes import instantpesa_callback_bp
+from instantpesa_payout_callback_routes import instantpesa_payout_callback_bp
+from cinoright_callback_routes import cinoright_callback_bp
+from maxpe_callback_routes import maxpe_callback_bp
+from maxpe_checkout_routes import maxpe_checkout_bp
+from maxpe_payout_callback_routes import maxpe_payout_callback_bp
+from clockspay_callback_routes import clockspay_callback_bp
+from clockspay_payout_callback_routes import clockspay_payout_callback_bp
+from sectorpe_callback_routes import sectorpe_callback_bp
+from sectorpe_payout_callback_routes import sectorpe_payout_callback_bp
+from risexpay_callback_routes import risexpay_callback_bp
+from risexpay_payout_callback_routes import risexpay_payout_callback_bp
+from rockypayz_payout_callback_routes import rockypayz_payout_callback_bp
+from oqpay_callback_routes import oqpay_callback_bp
+from oqpay_payout_callback_routes import oqpay_payout_callback_bp
+from alopna_callback_routes import alopna_callback_bp
+from alopna_payout_callback_routes import alopna_payout_callback_bp
+from razorpay_callback_routes import razorpay_callback_bp
+from paytm_callback_routes import paytm_callback_bp
+from nextpay_callback_routes import nextpay_callback_bp
+from nextpay_payout_callback_routes import nextpay_payout_callback_bp
+from tpipay_payout_callback_routes import tpipay_payout_callback_bp
+from makemypayment_payout_callback_routes import makemypayment_payout_callback_bp
+from payu_legalhalt_callback_routes import payu_legalhalt_callback_bp
+from localpaisa_callback_routes import localpaisa_callback_bp
+from titanexam_callback_routes import titanexam_callback_bp
+from acceptpay_callback_routes import acceptpay_callback_bp, cashfree_webhook_bp, acceptpay_webhook
+from oro_callback_routes import oro_callback_bp
+from oro_payout_callback_routes import oro_payout_callback_bp
 from service_routing_routes import routing_bp
 from payout_routes import payout_bp
 from payu_webhook_routes import payu_webhook_bp
@@ -63,10 +93,16 @@ from wallet_routes import wallet_bp
 from ip_security_routes import ip_security_bp
 from reconciliation_routes import reconciliation_bp
 from transaction_logs_routes import transaction_logs_bp
+from manual_reconciliation_routes import manual_recon_bp
+from auto_settlement_routes import auto_settlement_bp
+from chargeback_routes import chargeback_bp
+from user_transaction_summary_routes import user_txn_summary_bp
+from qr_routes import qr_bp
 
 app.register_blueprint(payin_bp)
 app.register_blueprint(mudrape_bp)
 app.register_blueprint(mudrape_callback_bp)
+app.register_blueprint(moneyone_callback_bp)
 app.register_blueprint(airpay_bp)
 app.register_blueprint(airpay_callback_bp)
 app.register_blueprint(paytouchpayin_bp)
@@ -82,6 +118,36 @@ app.register_blueprint(rang_bp)
 app.register_blueprint(rang_callback_bp)
 app.register_blueprint(viyonapay_bp)
 app.register_blueprint(viyonapay_callback_bp)
+app.register_blueprint(instantpesa_callback_bp)
+app.register_blueprint(instantpesa_payout_callback_bp)
+app.register_blueprint(cinoright_callback_bp)
+app.register_blueprint(maxpe_callback_bp)
+app.register_blueprint(maxpe_checkout_bp)
+app.register_blueprint(maxpe_payout_callback_bp)
+app.register_blueprint(clockspay_callback_bp)
+app.register_blueprint(clockspay_payout_callback_bp)
+app.register_blueprint(sectorpe_callback_bp)
+app.register_blueprint(sectorpe_payout_callback_bp)
+app.register_blueprint(risexpay_callback_bp)
+app.register_blueprint(risexpay_payout_callback_bp)
+app.register_blueprint(rockypayz_payout_callback_bp)
+app.register_blueprint(oqpay_callback_bp)
+app.register_blueprint(oqpay_payout_callback_bp)
+app.register_blueprint(alopna_callback_bp)
+app.register_blueprint(alopna_payout_callback_bp)
+app.register_blueprint(razorpay_callback_bp)
+app.register_blueprint(paytm_callback_bp)
+app.register_blueprint(nextpay_callback_bp)
+app.register_blueprint(nextpay_payout_callback_bp)
+app.register_blueprint(tpipay_payout_callback_bp)
+app.register_blueprint(makemypayment_payout_callback_bp)
+app.register_blueprint(payu_legalhalt_callback_bp)
+app.register_blueprint(localpaisa_callback_bp)
+app.register_blueprint(titanexam_callback_bp)
+app.register_blueprint(acceptpay_callback_bp)
+app.register_blueprint(cashfree_webhook_bp)
+app.register_blueprint(oro_callback_bp)
+app.register_blueprint(oro_payout_callback_bp)
 app.register_blueprint(routing_bp)
 app.register_blueprint(payout_bp)
 app.register_blueprint(payu_webhook_bp)
@@ -89,6 +155,14 @@ app.register_blueprint(wallet_bp)
 app.register_blueprint(ip_security_bp)
 app.register_blueprint(reconciliation_bp)
 app.register_blueprint(transaction_logs_bp)
+app.register_blueprint(manual_recon_bp)
+app.register_blueprint(auto_settlement_bp)
+app.register_blueprint(chargeback_bp)
+app.register_blueprint(user_txn_summary_bp)
+app.register_blueprint(qr_bp)
+
+# Root level webhook for AcceptPay as per documentation
+app.add_url_rule('/webhook', 'acceptpay_webhook_root', acceptpay_webhook, methods=['POST'])
 
 # Store captcha sessions (in production, use Redis or database)
 captcha_sessions = {}
@@ -107,10 +181,13 @@ def log_request_info():
     print(f"INFO:app:→ {request.method} {request.path} | IP: {ip} | User-Agent: {request.headers.get('User-Agent', 'N/A')}")
     if request.method in ['POST', 'PUT', 'PATCH'] and request.is_json:
         # Log request body (be careful with sensitive data)
-        body = request.get_json()
-        # Mask sensitive fields
+        body = request.get_json(silent=True)
+        # Mask sensitive fields — guard against non-dict JSON (e.g. arrays from some gateways)
         if body:
-            safe_body = {k: '***' if k in ['password', 'pin', 'tpin', 'secret', 'key'] else v for k, v in body.items()}
+            if isinstance(body, dict):
+                safe_body = {k: '***' if k in ['password', 'pin', 'tpin', 'secret', 'key'] else v for k, v in body.items()}
+            else:
+                safe_body = body  # list or other type — log as-is
             print(f"INFO:app:→ Request Body: {safe_body}")
 
 @app.after_request

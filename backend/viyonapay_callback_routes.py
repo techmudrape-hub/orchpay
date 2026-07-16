@@ -16,33 +16,27 @@ from config import Config
 
 viyonapay_callback_bp = Blueprint('viyonapay_callback', __name__, url_prefix='/api/callback/viyonapay')
 
-def load_viyonapay_public_key(config_type='TRUAXIS'):
+def load_viyonapay_public_key():
     """Load VIYONAPAY's public key for signature verification"""
     try:
-        if config_type == 'BARRINGER':
-            key_path = Config.VIYONAPAY_BARRINGER_SERVER_PUBLIC_KEY_PATH
-        else:
-            key_path = Config.VIYONAPAY_SERVER_PUBLIC_KEY_PATH
+        key_path = Config.VIYONAPAY_SERVER_PUBLIC_KEY_PATH
         
         with open(key_path, 'r') as f:
             key_data = f.read()
         return RSA.import_key(key_data)
     except Exception as e:
-        print(f"❌ Failed to load VIYONAPAY {config_type} public key: {e}")
+        print(f"❌ Failed to load VIYONAPAY public key: {e}")
         return None
 
-def load_client_secret_key(config_type='TRUAXIS'):
+def load_client_secret_key():
     """Load client secret key for decryption (16-byte hex key)"""
     try:
         # The secret key should be a 16-byte (128-bit) key in hex format (32 hex chars)
         # This is the same key used for webhook encryption/decryption
-        if config_type == 'BARRINGER':
-            secret_key_hex = Config.VIYONAPAY_BARRINGER_WEBHOOK_SECRET_KEY if hasattr(Config, 'VIYONAPAY_BARRINGER_WEBHOOK_SECRET_KEY') else Config.VIYONAPAY_WEBHOOK_SECRET_KEY
-        else:
-            secret_key_hex = Config.VIYONAPAY_WEBHOOK_SECRET_KEY
+        secret_key_hex = Config.VIYONAPAY_WEBHOOK_SECRET_KEY
         
         if not secret_key_hex:
-            print(f"❌ VIYONAPAY {config_type} WEBHOOK_SECRET_KEY not configured in .env")
+            print(f"❌ VIYONAPAY WEBHOOK_SECRET_KEY not configured in .env")
             return None
         key_bytes = bytes.fromhex(secret_key_hex)
         if len(key_bytes) != 16:
@@ -50,24 +44,23 @@ def load_client_secret_key(config_type='TRUAXIS'):
             return None
         return key_bytes
     except Exception as e:
-        print(f"❌ Failed to load webhook secret key for {config_type}: {e}")
+        print(f"❌ Failed to load webhook secret key: {e}")
         return None
 
-def verify_signature(payload_dict, signature_b64, config_type='TRUAXIS'):
+def verify_signature(payload_dict, signature_b64):
     """
     Verify webhook signature using VIYONAPAY's public key
     
     Args:
         payload_dict: Webhook payload dictionary
         signature_b64: Base64-encoded signature from X-SIGNATURE header
-        config_type: 'TRUAXIS' or 'BARRINGER'
     
     Returns:
         Boolean indicating if signature is valid
     """
     try:
-        # Load public key for the specific configuration
-        public_key = load_viyonapay_public_key(config_type)
+        # Load public key
+        public_key = load_viyonapay_public_key()
         if not public_key:
             return False
         
@@ -85,7 +78,7 @@ def verify_signature(payload_dict, signature_b64, config_type='TRUAXIS'):
         
         return True
     except Exception as e:
-        print(f"❌ Signature verification failed for {config_type}: {e}")
+        print(f"❌ Signature verification failed: {e}")
         return False
 
 def decrypt_webhook_response(encrypted_b64, secret_key, aad_dict):
@@ -246,87 +239,96 @@ def viyonapay_payin_callback():
         print(json.dumps(webhook_data, indent=2))
         
         # Verify signature BEFORE decryption (signature is on the encrypted payload)
-        # Try both configurations since we don't know which one was used yet
-        config_type = None
         if signature:
             print(f"\n🔐 Verifying signature on encrypted payload...")
             print(f"  Signature (base64): {signature[:50]}...")
             
-            # Try Truaxis first
-            print(f"  Trying TRUAXIS configuration...")
-            signature_valid = verify_signature(webhook_data, signature, 'TRUAXIS')
+            signature_valid = verify_signature(webhook_data, signature)
             
             if signature_valid:
-                config_type = 'TRUAXIS'
-                print(f"✓ Signature verified successfully with TRUAXIS")
+                print(f"✓ Signature verified successfully")
             else:
-                # Try Barringer
-                print(f"  Trying BARRINGER configuration...")
-                signature_valid = verify_signature(webhook_data, signature, 'BARRINGER')
+                print(f"❌ Signature verification failed")
                 
-                if signature_valid:
-                    config_type = 'BARRINGER'
-                    print(f"✓ Signature verified successfully with BARRINGER")
-                else:
-                    print(f"❌ Signature verification failed for both configurations")
-                    
-                    # Log details for debugging
-                    print(f"\n🔍 Signature Debug Info:")
-                    json_canonical = json.dumps(webhook_data, separators=(',', ':'), sort_keys=True)
-                    print(f"  Payload (canonical JSON): {json_canonical[:200]}...")
-                    
-                    from Crypto.Hash import SHA256
-                    hash_obj = SHA256.new(json_canonical.encode('utf-8'))
-                    print(f"  SHA256 hash: {hash_obj.hexdigest()}")
-                    
-                    return jsonify({'success': False, 'message': 'Invalid signature'}), 401
+                # Log details for debugging
+                print(f"\n🔍 Signature Debug Info:")
+                json_canonical = json.dumps(webhook_data, separators=(',', ':'), sort_keys=True)
+                print(f"  Payload (canonical JSON): {json_canonical[:200]}...")
+                
+                from Crypto.Hash import SHA256
+                hash_obj = SHA256.new(json_canonical.encode('utf-8'))
+                print(f"  SHA256 hash: {hash_obj.hexdigest()}")
+                
+                return jsonify({'success': False, 'message': 'Invalid signature'}), 401
         else:
             print(f"⚠ No signature provided in X-SIGNATURE header")
-            # Default to TRUAXIS if no signature
-            config_type = 'TRUAXIS'
-        
-        print(f"\n📋 Using configuration: {config_type}")
         
         # Check if payload contains encrypted_data
         encrypted_data = webhook_data.get('encrypted_data')
-        if encrypted_data and timestamp_header and request_id_header:
-            print(f"\n🔓 Decrypting webhook payload using {config_type} configuration...")
-            
-            # Load secret key for the detected configuration
-            secret_key = load_client_secret_key(config_type)
-            if not secret_key:
-                print(f"❌ Failed to load webhook secret key for {config_type}")
-                return jsonify({'success': False, 'message': 'Configuration error'}), 500
-            
-            # Prepare AAD
-            aad = {
-                'timestamp': int(timestamp_header),
-                'request_id': request_id_header
-            }
-            
-            # Decrypt
-            decrypted_data = decrypt_webhook_response(encrypted_data, secret_key, aad)
-            
-            if not decrypted_data:
-                print(f"❌ Failed to decrypt webhook payload")
-                return jsonify({'success': False, 'message': 'Decryption failed'}), 400
-            
-            print(f"✅ Decryption successful!")
-            print(f"\n📦 Decrypted Payload:")
-            print(json.dumps(decrypted_data, indent=2))
-            
-            # Extract responseBody (actual payment data)
-            response_body = decrypted_data.get('responseBody', {})
-            if not response_body:
-                print(f"❌ No responseBody in decrypted data")
-                return jsonify({'success': False, 'message': 'Invalid payload structure'}), 400
-            
-            # Use decrypted data as webhook_data
-            webhook_data = response_body
-            print(f"\n📦 Extracted Payment Data:")
-            print(json.dumps(webhook_data, indent=2))
+        if encrypted_data:
+            if timestamp_header and request_id_header:
+                print(f"\n🔓 Decrypting webhook payload...")
+                
+                # Load secret key
+                secret_key = load_client_secret_key()
+                if not secret_key:
+                    print(f"❌ Failed to load webhook secret key")
+                    return jsonify({'success': False, 'message': 'Configuration error'}), 500
+                
+                # Prepare AAD
+                aad = {
+                    'timestamp': int(timestamp_header),
+                    'request_id': request_id_header
+                }
+                
+                # Decrypt
+                decrypted_data = decrypt_webhook_response(encrypted_data, secret_key, aad)
+                
+                if not decrypted_data:
+                    print(f"❌ Failed to decrypt webhook payload")
+                    return jsonify({'success': False, 'message': 'Decryption failed'}), 400
+                
+                print(f"✅ Decryption successful!")
+                print(f"\n📦 Decrypted Payload:")
+                print(json.dumps(decrypted_data, indent=2))
+                
+                # Extract responseBody (actual payment data)
+                response_body = decrypted_data.get('responseBody', {})
+                if not response_body:
+                    print(f"❌ No responseBody in decrypted data")
+                    return jsonify({'success': False, 'message': 'Invalid payload structure'}), 400
+                
+                # Use decrypted data as webhook_data
+                webhook_data = response_body
+                print(f"\n📦 Extracted Payment Data:")
+                print(json.dumps(webhook_data, indent=2))
+                
+                # Log the order_id prominently for debugging
+                order_id_from_callback = webhook_data.get('orderId')
+                print(f"\n🔑 ORDER_ID FROM VIYONAPAY CALLBACK: '{order_id_from_callback}'")
+            else:
+                print(f"\n❌ ENCRYPTED CALLBACK RECEIVED BUT MISSING REQUIRED HEADERS!")
+                print(f"{'='*60}")
+                print(f"   X-TIMESTAMP: {timestamp_header or 'MISSING'}")
+                print(f"   X-Request-Id: {request_id_header or 'MISSING'}")
+                print(f"{'='*60}")
+                print(f"\n⚠️  CANNOT DECRYPT WITHOUT THESE HEADERS!")
+                print(f"\n📧 Please contact ViyonaPay support and inform them:")
+                print(f"   1. Webhook callbacks are missing required headers")
+                print(f"   2. They MUST send: X-TIMESTAMP, X-Request-Id, X-SIGNATURE")
+                print(f"   3. Without these headers, encrypted payloads cannot be decrypted")
+                print(f"   4. Callback URL: https://api.orchpay.in/api/callback/viyonapay/payin")
+                print(f"{'='*60}")
+                
+                # Return error with helpful message
+                return jsonify({
+                    'success': False,
+                    'message': 'Missing required headers for encrypted callback',
+                    'required_headers': ['X-TIMESTAMP', 'X-Request-Id', 'X-SIGNATURE'],
+                    'note': 'Please contact ViyonaPay support to configure proper webhook headers'
+                }), 400
         else:
-            print(f"\n📦 Plain Webhook Payload:")
+            print(f"\n📦 Plain Webhook Payload (not encrypted):")
             print(json.dumps(webhook_data, indent=2))
         
         # Extract payment details
@@ -345,7 +347,7 @@ def viyonapay_payin_callback():
         print(f"\n💳 Payment Details:")
         print(f"  Status: {payment_status}")
         print(f"  Transaction ID: {transaction_id}")
-        print(f"  Order ID: {order_id}")
+        print(f"  Order ID: '{order_id}' (length: {len(order_id) if order_id else 0})")
         print(f"  Amount: ₹{amount}")
         print(f"  Payment Mode: {payment_mode}")
         print(f"  Bank Ref: {bank_ref_id}")
@@ -368,11 +370,11 @@ def viyonapay_payin_callback():
         
         try:
             with conn.cursor() as cursor:
-                # Find transaction by order_id - check both VIYONAPAY and VIYONAPAY_BARRINGER
+                # Find transaction by order_id - only VIYONAPAY
                 cursor.execute("""
                     SELECT txn_id, merchant_id, status, net_amount, charge_amount, pg_partner
                     FROM payin_transactions
-                    WHERE order_id = %s AND pg_partner IN ('VIYONAPAY', 'VIYONAPAY_BARRINGER')
+                    WHERE order_id = %s AND pg_partner = 'VIYONAPAY'
                     ORDER BY created_at DESC
                     LIMIT 1
                 """, (order_id,))
@@ -381,6 +383,25 @@ def viyonapay_payin_callback():
                 
                 if not txn:
                     print(f"❌ Transaction not found for order_id: {order_id}")
+                    print(f"   Searched for: order_id = '{order_id}' AND pg_partner = 'VIYONAPAY'")
+                    
+                    # Show recent ViyonaPay transactions for debugging
+                    cursor.execute("""
+                        SELECT order_id, txn_id, pg_partner, status, created_at
+                        FROM payin_transactions
+                        WHERE pg_partner = 'VIYONAPAY'
+                        ORDER BY created_at DESC
+                        LIMIT 5
+                    """)
+                    recent_txns = cursor.fetchall()
+                    
+                    if recent_txns:
+                        print(f"\n   Recent ViyonaPay transactions in database:")
+                        for rt in recent_txns:
+                            print(f"     - order_id: '{rt['order_id']}' | pg_partner: {rt['pg_partner']} | status: {rt['status']}")
+                    else:
+                        print(f"   No ViyonaPay transactions found in database")
+                    
                     return jsonify({'success': False, 'message': 'Transaction not found'}), 404
                 
                 print(f"\n✓ Transaction found: {txn['txn_id']}")
@@ -392,7 +413,7 @@ def viyonapay_payin_callback():
                     print(f"⚠ Duplicate callback - transaction already {status}")
                     
                     # Still send success response
-                    secret_key = load_client_secret_key(config_type)
+                    secret_key = load_client_secret_key()
                     if secret_key and timestamp_header and request_id_header:
                         aad = {
                             'timestamp': int(timestamp_header),
@@ -593,7 +614,7 @@ def viyonapay_payin_callback():
                 print(f"{'='*60}\n")
                 
                 # Prepare encrypted response
-                secret_key = load_client_secret_key(config_type)
+                secret_key = load_client_secret_key()
                 
                 if secret_key and timestamp_header and request_id_header:
                     # Prepare AAD for response encryption

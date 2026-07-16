@@ -13,8 +13,8 @@ export default function Login() {
   usePageTitle('Merchant Login');
   const navigate = useNavigate()
   const location = useLocation()
-  const [credentials, setCredentials] = useState({ 
-    merchantId: '', 
+  const [credentials, setCredentials] = useState({
+    merchantId: '',
     password: ''
   })
   const [loading, setLoading] = useState(false)
@@ -31,7 +31,7 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault()
-    
+
     if (!credentials.merchantId || !credentials.password) {
       toast.error('Please fill all fields')
       return
@@ -40,10 +40,10 @@ export default function Login() {
     setLoading(true)
     try {
       const response = await clientAPI.login(
-        credentials.merchantId, 
+        credentials.merchantId,
         credentials.password
       )
-      
+
       if (response.success) {
         toast.success(`Welcome back, ${response.merchantName}!`)
         // Redirect to the page they tried to visit or dashboard
@@ -139,7 +139,7 @@ export default function Login() {
                   />
                 </div>
               </div>
-              
+
               <div className="flex items-center justify-between text-sm">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" className="rounded border-purple-300 text-purple-600 focus:ring-purple-500" disabled={loading} />
@@ -147,8 +147,8 @@ export default function Login() {
                 </label>
               </div>
 
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={loading}
                 className="w-full h-12 orchpay-gradient-btn text-white font-semibold rounded-xl shadow-lg hover:shadow-2xl transition-all disabled:opacity-50"
               >

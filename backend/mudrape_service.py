@@ -26,51 +26,23 @@ class MudrapeService:
         self.token = None
         self.token_expiry = None
     
-    def get_headers(self, include_auth=False):
-        """Get request headers"""
+    def get_headers(self, include_auth=True):
+        """
+        Get request headers for Mudrape API
+        
+        Args:
+            include_auth: Not used anymore - kept for backward compatibility
+                         New API uses x-api-key and x-api-secret for all requests
+        """
         headers = {
+            'x-user-id': self.user_id,
             'x-api-key': self.api_key,
             'x-api-secret': self.api_secret,
             'Content-Type': 'application/json'
         }
-        
-        if include_auth and self.token:
-            headers['Authorization'] = f'Bearer {self.token}'
-        
         return headers
     
-    def generate_token(self):
-        """Generate authentication token"""
-        try:
-            url = f"{self.base_url}/api/api-mudrape/genrate-token"
-            
-            payload = {
-                'mid': self.merchant_mid,
-                'email': self.merchant_email,
-                'secretkey': self.merchant_secret
-            }
-            
-            response = requests.post(
-                url,
-                headers=self.get_headers(),
-                json=payload,
-                timeout=30
-            )
-            
-            # Accept both 200 and 201 status codes
-            if response.status_code in [200, 201]:
-                data = response.json()
-                if data.get('success'):
-                    self.token = data.get('token')
-                    return {'success': True, 'token': self.token}
-                else:
-                    return {'success': False, 'message': data.get('message', 'Token generation failed')}
-            else:
-                return {'success': False, 'message': f'Token generation failed: {response.text}'}
-                
-        except Exception as e:
-            print(f"Generate token error: {e}")
-            return {'success': False, 'message': f'Token generation error: {str(e)}'}
+    # Token generation is no longer needed for new API - authentication via headers only
     
     def generate_txn_id(self, merchant_id, order_id):
         """Generate unique 20-digit transaction ID for Mudrape RefID"""
@@ -127,7 +99,7 @@ class MudrapeService:
     
     def create_payin_order(self, merchant_id, order_data):
         """
-        Create payin order via Mudrape
+        Create payin order via NEW Mudrape API
         order_data should contain:
         - amount
         - orderid
@@ -169,42 +141,35 @@ class MudrapeService:
                 if charge_amount is None:
                     return {'success': False, 'message': 'Failed to calculate charges'}
                 
-                # Generate unique 20-digit RefID
-                ref_id = self.generate_txn_id(merchant_id, order_data.get('orderid'))
+                # Generate unique order ID (use merchant's order ID)
+                order_id = order_data.get('orderid')
+                if not order_id:
+                    order_id = f"ORD_{merchant_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 
-                # Also create our internal transaction ID
-                txn_id = f"MUDRAPE_{merchant_id}_{order_data.get('orderid')}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                # Create internal transaction ID
+                txn_id = f"MUDRAPE_{merchant_id}_{order_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 
-                # Ensure token is valid
-                if not self.token:
-                    token_result = self.generate_token()
-                    if not token_result['success']:
-                        return token_result
+                # Prepare customer data
+                customer_name = f"{order_data.get('payee_fname', '')} {order_data.get('payee_lname', '')}".strip()
+                customer_phone = order_data.get('payee_mobile', '')
+                customer_email = order_data.get('payee_email', '')
                 
-                # Prepare Mudrape order data
-                firstname = order_data.get('payee_fname', '')
-                lastname = order_data.get('payee_lname', '')
-                email = order_data.get('payee_email', '')
-                phone = order_data.get('payee_mobile', '')
-                
-                # Create order on Mudrape using NEW endpoint (updated by Mudrape team)
-                url = f"{self.base_url}/api/api-payment/create-order"
+                # NEW API: Create payment intent
+                url = f"{self.base_url}/api/mudrape-payin/create-intent"
                 
                 payload = {
-                    'RefID': ref_id,  # 20-digit unique reference ID (capital R as per new API)
-                    'Amount': str(int(amount)),  # Amount as string (as per new API format)
-                    'Customer_Name': f"{firstname} {lastname}".strip(),  # Customer name
-                    'Customer_Mobile': phone,  # Customer mobile
-                    'Customer_Email': email,  # Customer email
-                    'userId': self.user_id  # Required by Mudrape API
+                    'orderId': order_id,
+                    'amount': amount,
+                    'customerName': customer_name,
+                    'customerPhone': customer_phone,
+                    'paymentRemark': order_data.get('productinfo', 'Payment')
                 }
                 
-                print(f"Creating Mudrape order with payload: {payload}")
-                print(f"Using token: {self.token[:20]}..." if self.token else "No token!")
+                print(f"Creating Mudrape payment intent with NEW API: {payload}")
                 
                 response = requests.post(
                     url,
-                    headers=self.get_headers(include_auth=True),
+                    headers=self.get_headers(),
                     json=payload,
                     timeout=30
                 )
@@ -212,7 +177,6 @@ class MudrapeService:
                 print(f"Mudrape API Response Status: {response.status_code}")
                 print(f"Mudrape API Response: {response.text}")
                 
-                # Accept both 200 and 201 status codes
                 if response.status_code not in [200, 201]:
                     error_msg = f'Mudrape API error: {response.text}'
                     print(error_msg)
@@ -222,37 +186,37 @@ class MudrapeService:
                 print(f"Mudrape Response JSON: {mudrape_response}")
                 
                 if not mudrape_response.get('success'):
-                    error_msg = mudrape_response.get('message', 'Order creation failed')
-                    error_details = mudrape_response.get('error', '')
-                    full_error = f"{error_msg}. {error_details}" if error_details else error_msg
-                    print(f"Mudrape order creation failed: {full_error}")
-                    return {'success': False, 'message': full_error}
+                    error_msg = mudrape_response.get('message', 'Payment intent creation failed')
+                    print(f"Mudrape payment intent creation failed: {error_msg}")
+                    return {'success': False, 'message': error_msg}
                 
-                # Extract QR and UPI data from Mudrape response
+                # Extract data from NEW API response
                 response_data = mudrape_response.get('data', {})
-                qr_string = response_data.get('qrString') or response_data.get('qr_string') or response_data.get('qrCode') or ''
-                upi_link = response_data.get('upiLink') or response_data.get('upi_link') or response_data.get('upiIntent') or ''
-                mudrape_txn_id = response_data.get('txnId') or response_data.get('transactionId') or response_data.get('transaction_id') or ref_id
+                payin_id = response_data.get('payinId')
+                payin_reference_id = response_data.get('payinReferenceId')
+                transaction_id = response_data.get('transactionId')
+                intent_link = response_data.get('intentLink')
+                merchant_reference_id = response_data.get('merchantReferenceId')
+                channel = response_data.get('channel', 'UPI')
+                status = response_data.get('status', 'PENDING')
                 
                 # Validate that we got the required data
-                if not upi_link and not qr_string:
-                    print(f"No UPI link or QR string in response: {mudrape_response}")
+                if not intent_link:
+                    print(f"No intent link in response: {mudrape_response}")
                     return {'success': False, 'message': 'No payment link received from Mudrape'}
                 
                 # Extract callback URL from order_data
-                # If no callback URL provided, use default internal callback URL
                 callback_url = order_data.get('callbackurl') or order_data.get('callback_url')
                 
                 if not callback_url:
-                    # Use default internal callback URL for dashboard-generated QR codes
-                    # This ensures Mudrape can notify us when payment succeeds
-                    from config import Config
+                    # Use default internal callback URL
                     base_url = os.getenv('BACKEND_URL', 'https://admin.moneyone.co.in')
                     callback_url = f"{base_url}/api/callback/mudrape/payin"
                     print(f"⚠ No callback URL provided, using default: {callback_url}")
                 
-                # IMPORTANT: Store ref_id as order_id because Mudrape sends ref_id in callbacks
-                # The merchant's original orderid is stored in txn_id for reference
+                # Map status to our database ENUM
+                db_status = 'INITIATED' if status == 'PENDING' else status
+                
                 # Insert transaction record
                 cursor.execute("""
                     INSERT INTO payin_transactions (
@@ -264,133 +228,101 @@ class MudrapeService:
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                     )
                 """, (
-                    txn_id, merchant_id, ref_id, amount,  # Store ref_id as order_id
+                    txn_id, merchant_id, order_id, amount,
                     charge_amount, charge_type, net_amount,
-                    f"{firstname} {lastname}".strip(), email, phone, 
+                    customer_name, customer_email, customer_phone, 
                     order_data.get('productinfo', 'Payment'),
-                    'INITIATED', 'Mudrape', mudrape_txn_id,
+                    db_status, 'Mudrape', payin_reference_id,
                     callback_url
                 ))
                 
                 print(f"✓ Transaction created:")
                 print(f"  - TXN ID: {txn_id}")
-                print(f"  - Order ID (ref_id): {ref_id}")
-                print(f"  - Merchant Order ID: {order_data.get('orderid')}")
+                print(f"  - Order ID: {order_id}")
+                print(f"  - Payin Reference ID: {payin_reference_id}")
+                print(f"  - Transaction ID: {transaction_id}")
                 print(f"  - Callback URL: {callback_url if callback_url else 'NOT PROVIDED'}")
                 
                 conn.commit()
                 
                 # Schedule automatic status check after 60 seconds
-                # This ensures status gets updated even if callback fails or is delayed
-                self.auto_check_status_after_delay(ref_id, delay_seconds=60)
-                print(f"✓ Scheduled automatic status check for {ref_id} in 60 seconds")
+                self.auto_check_status_after_delay(order_id, payin_reference_id, delay_seconds=60)
+                print(f"✓ Scheduled automatic status check for {order_id} in 60 seconds")
                 
                 return {
                     'success': True,
                     'txn_id': txn_id,
-                    'order_id': ref_id,  # Return ref_id as order_id (this is what Mudrape will use in callbacks)
-                    'merchant_order_id': order_data.get('orderid'),  # Original merchant order ID for reference
+                    'order_id': order_id,
+                    'payin_id': payin_id,
+                    'payin_reference_id': payin_reference_id,
+                    'transaction_id': transaction_id,
                     'amount': amount,
                     'charge_amount': charge_amount,
                     'net_amount': net_amount,
-                    'qr_string': qr_string,
-                    'upi_link': upi_link,
-                    'mudrape_txn_id': mudrape_txn_id
+                    'upi_link': intent_link,
+                    'intent_link': intent_link,
+                    'qr_string': intent_link,  # For backward compatibility
+                    'channel': channel,
+                    'merchant_reference_id': merchant_reference_id
                 }
                 
         except Exception as e:
             print(f"Create payin order error: {e}")
+            import traceback
+            traceback.print_exc()
             return {'success': False, 'message': f'Internal error: {str(e)}'}
         finally:
             if conn:
                 conn.close()
     
-    def check_payment_status(self, identifier):
+    def check_payment_status(self, order_id=None, payin_reference_id=None, transaction_id=None):
         """
-        Check payment status on Mudrape using new GET endpoint
+        Check payment status on Mudrape using NEW API
         
         Args:
-            identifier: Can be order_id (refId) or Mudrape transaction ID (txnId)
+            order_id: Your original order ID
+            payin_reference_id: Payin reference ID from create intent
+            transaction_id: Provider transaction ID
         
         Returns:
             dict: Status information
         """
         try:
-            # Ensure token is valid
-            if not self.token:
-                token_result = self.generate_token()
-                if not token_result['success']:
-                    return token_result
+            print(f"Checking Mudrape payin status - orderId: {order_id}, payinReferenceId: {payin_reference_id}, transactionId: {transaction_id}")
             
-            print(f"Checking Mudrape payin status for identifier: {identifier}")
+            # NEW API: Status check endpoint
+            url = f"{self.base_url}/api/mudrape-payin/status-check"
             
-            # NEW: Use GET endpoint with query parameter
-            # URL format: https://agentmudrape.com/api/api-mudrape/status?txnId=MPAY31716296742
-            url = f"{self.base_url}/api/api-mudrape/status"
+            # Build payload with available identifiers
+            payload = {}
+            if order_id:
+                payload['orderId'] = order_id
+            if payin_reference_id:
+                payload['payinReferenceId'] = payin_reference_id
+            if transaction_id:
+                payload['transactionId'] = transaction_id
             
-            # Try with txnId first (if identifier looks like a Mudrape transaction ID)
-            if identifier.startswith('TPA') or identifier.startswith('MUDRAPE_TXN') or identifier.startswith('MPAY'):
-                print(f"Attempting with txnId as query parameter...")
-                params = {'txnId': identifier}
-                print(f"Request URL: {url}?txnId={identifier}")
-                
-                response = requests.get(
-                    url,
-                    headers=self.get_headers(include_auth=True),
-                    params=params,
-                    timeout=30
-                )
-                
-                print(f"Response: {response.status_code} - {response.text[:500]}")
-                
-                if response.status_code in [200, 201] and response.json().get('success'):
-                    mudrape_response = response.json()
-                else:
-                    # Fall through to try refId
-                    print(f"txnId failed, trying refId as query parameter...")
-                    params = {'refId': identifier}
-                    print(f"Request URL: {url}?refId={identifier}")
-                    
-                    response = requests.get(
-                        url,
-                        headers=self.get_headers(include_auth=True),
-                        params=params,
-                        timeout=30
-                    )
-                    
-                    print(f"Response: {response.status_code} - {response.text[:500]}")
-                    
-                    if response.status_code not in [200, 201]:
-                        return {
-                            'success': False,
-                            'message': f'Transaction not found in Mudrape. This usually means the payment was not initiated yet or the transaction ID is incorrect.',
-                            'note': 'Callbacks from Mudrape are required to get the Mudrape transaction ID'
-                        }
-                    
-                    mudrape_response = response.json()
-            else:
-                # Assume it's a refId (order_id)
-                print(f"Attempting with refId as query parameter...")
-                params = {'refId': identifier}
-                print(f"Request URL: {url}?refId={identifier}")
-                
-                response = requests.get(
-                    url,
-                    headers=self.get_headers(include_auth=True),
-                    params=params,
-                    timeout=30
-                )
-                
-                print(f"Response: {response.status_code} - {response.text[:500]}")
-                
-                if response.status_code not in [200, 201]:
-                    return {
-                        'success': False,
-                        'message': f'Transaction not found in Mudrape. This usually means the payment was not initiated yet.',
-                        'note': 'The transaction may not exist in Mudrape system until customer scans QR and initiates payment'
-                    }
-                
-                mudrape_response = response.json()
+            if not payload:
+                return {'success': False, 'message': 'At least one identifier (orderId, payinReferenceId, or transactionId) is required'}
+            
+            print(f"Status check payload: {payload}")
+            
+            response = requests.post(
+                url,
+                headers=self.get_headers(),
+                json=payload,
+                timeout=30
+            )
+            
+            print(f"Response: {response.status_code} - {response.text[:500]}")
+            
+            if response.status_code not in [200, 201]:
+                return {
+                    'success': False,
+                    'message': f'Status check failed: {response.text}'
+                }
+            
+            mudrape_response = response.json()
             
             # Extract data from Mudrape response
             if not mudrape_response.get('success'):
@@ -402,7 +334,7 @@ class MudrapeService:
             data = mudrape_response.get('data', {})
             
             # Extract status
-            status = data.get('status', 'INITIATED')
+            status = data.get('status', 'PENDING')
             if status.upper() == 'PENDING':
                 status = 'INITIATED'  # Map PENDING to INITIATED
             else:
@@ -410,36 +342,30 @@ class MudrapeService:
             
             # Extract timestamps
             created_at = data.get('createdAt')
-            processed_at = data.get('processedAt') or data.get('transactionDate') or data.get('completedAt')
+            transacted_at = data.get('transactedAt')
             
             # Convert timestamps from UTC to IST using timezone utilities
             created_at_ist = parse_mudrape_timestamp(created_at) if created_at else None
-            processed_at_ist = parse_mudrape_timestamp(processed_at) if processed_at else None
+            transacted_at_ist = parse_mudrape_timestamp(transacted_at) if transacted_at else None
             
-            # Extract UTR - Mudrape may not provide it directly, try multiple sources
-            utr = data.get('utr') or data.get('bankRefNo') or data.get('bank_ref_no') or data.get('UTR')
-            
-            # If no UTR, try to extract transaction reference from UPI string
-            if not utr:
-                qr_string = data.get('qrString') or data.get('upiLink')
-                if qr_string and 'tr=' in qr_string:
-                    # Extract tr parameter from UPI string
-                    import re
-                    match = re.search(r'tr=([^&]+)', qr_string)
-                    if match:
-                        utr = match.group(1)
-                        print(f"Extracted UTR from UPI string: {utr}")
+            # Extract bank transaction details
+            bank_transaction_id = data.get('bankTransactionId')
+            bank_reference_number = data.get('bankReferenceNumber')
             
             result = {
                 'success': True,
                 'status': status,
-                'txnId': data.get('txnId') or data.get('transactionId'),
-                'refId': data.get('refId') or data.get('RefID') or identifier,
+                'payinId': data.get('payinId'),
+                'payinReferenceId': data.get('payinReferenceId'),
+                'orderId': data.get('orderId'),
+                'transactionId': data.get('transactionId'),
                 'amount': data.get('amount'),
-                'utr': utr,
-                'payment_mode': data.get('paymentMode') or data.get('channel') or 'UPI',
+                'bankTransactionId': bank_transaction_id,
+                'bankReferenceNumber': bank_reference_number,
+                'utr': bank_transaction_id or bank_reference_number,  # Use either as UTR
+                'channel': data.get('channel', 'UPI'),
                 'created_at': created_at_ist,
-                'completed_at': processed_at_ist,
+                'completed_at': transacted_at_ist,
                 'message': mudrape_response.get('message', 'Status retrieved successfully')
             }
             
@@ -453,13 +379,14 @@ class MudrapeService:
             traceback.print_exc()
             return {'success': False, 'message': f'Status check error: {str(e)}'}
     
-    def auto_check_status_after_delay(self, order_id, delay_seconds=60):
+    def auto_check_status_after_delay(self, order_id, payin_reference_id, delay_seconds=60):
         """
         Automatically check payment status after a delay
         This ensures status gets updated even if callback fails
         
         Args:
-            order_id: The order_id (ref_id) to check
+            order_id: The order_id to check
+            payin_reference_id: The payin reference ID from create intent
             delay_seconds: Delay before checking (default 60 seconds)
         """
         def check_status_task():
@@ -494,13 +421,13 @@ class MudrapeService:
                             print(f"[Auto Status Check] Transaction already {txn['status']}, skipping")
                             return
                         
-                        # Use pg_txn_id if available, otherwise use order_id
-                        identifier = txn.get('pg_txn_id') or order_id
+                        print(f"[Auto Status Check] Checking Mudrape with orderId: {order_id}, payinReferenceId: {payin_reference_id}")
                         
-                        print(f"[Auto Status Check] Checking Mudrape with identifier: {identifier}")
-                        
-                        # Check status from Mudrape
-                        status_result = self.check_payment_status(identifier)
+                        # Check status from Mudrape using NEW API
+                        status_result = self.check_payment_status(
+                            order_id=order_id,
+                            payin_reference_id=payin_reference_id
+                        )
                         
                         if not status_result.get('success'):
                             print(f"[Auto Status Check] Status check failed: {status_result.get('message')}")
@@ -523,7 +450,7 @@ class MudrapeService:
                                     completed_at = NOW(),
                                     updated_at = NOW()
                                 WHERE txn_id = %s
-                            """, (status_result.get('utr'), status_result.get('txnId'), txn['txn_id']))
+                            """, (status_result.get('utr'), status_result.get('payinReferenceId'), txn['txn_id']))
                             
                             # Check if wallet already credited (idempotency)
                             cursor.execute("""
@@ -576,7 +503,7 @@ class MudrapeService:
                                     completed_at = NOW(),
                                     updated_at = NOW()
                                 WHERE txn_id = %s
-                            """, (status_result.get('txnId'), txn['txn_id']))
+                            """, (status_result.get('payinReferenceId'), txn['txn_id']))
                             
                             conn.commit()
                             print(f"[Auto Status Check] ✓ Updated {txn['txn_id']} to FAILED")
@@ -662,24 +589,43 @@ class MudrapeService:
             traceback.print_exc()
             return {'success': False, 'message': f'API call error: {str(e)}'}
     
-    def call_imps_payout_api(self, account_number, ifsc_code, client_txn_id, amount, beneficiary_name):
+    def call_imps_payout_api(self, account_number, ifsc_code, client_txn_id, amount, beneficiary_name, mobile=None, email=None, payer_name=None):
         """
+        NEW Mudrape IMPS Payout API (Updated April 2026)
         Simple IMPS payout API call to Mudrape (no database operations)
         Returns the API response
+        
+        Args:
+            account_number: Beneficiary bank account number
+            ifsc_code: Beneficiary IFSC code (format: AAAA0XXXXXX)
+            client_txn_id: Unique transaction ID from your system
+            amount: Transfer amount in INR
+            beneficiary_name: Beneficiary's full name
+            mobile: Beneficiary mobile number (optional)
+            email: Beneficiary email address (optional)
+            payer_name: Payer/company name (optional)
         """
         try:
             url = f"{self.base_url}/api/payout/imps"
             
             payload = {
-                'userId': 'cmlujaiqv00tw01s6up9o7376',  # Fixed userId for all payouts
-                'p1': account_number,  # Account Number
-                'p2': ifsc_code,  # IFSC Code
-                'p3': client_txn_id,  # Client Transaction ID
-                'p4': str(amount),  # Amount
-                'p5': beneficiary_name  # Beneficiary Name
+                'userId': self.user_id,  # Your Mudrape User ID
+                'p1': account_number,  # Beneficiary bank account number
+                'p2': ifsc_code,  # Beneficiary IFSC code
+                'p3': client_txn_id,  # Unique transaction ID
+                'p4': f"{float(amount):.2f}",  # Amount as string with 2 decimals
+                'p5': beneficiary_name  # Beneficiary's full name
             }
             
-            print(f"Calling Mudrape IMPS payout API: {payload}")
+            # Add optional parameters
+            if mobile:
+                payload['p6'] = mobile
+            if email:
+                payload['p7'] = email
+            if payer_name:
+                payload['p8'] = payer_name
+            
+            print(f"Calling NEW Mudrape IMPS payout API: {payload}")
             print(f"URL: {url}")
             
             response = requests.post(
@@ -708,41 +654,51 @@ class MudrapeService:
                     'message': error_msg
                 }
             
-            # Extract status - Mudrape uses 'statuscode' (numeric) and 'payoutStatus' (string)
-            status_code = str(mudrape_response.get('statuscode', '10001'))
-            payout_status = mudrape_response.get('payoutStatus', '')
-            mudrape_txn_id = (mudrape_response.get('transactionId') or 
-                            mudrape_response.get('apiTxnId') or 
-                            mudrape_response.get('txnId') or '')
+            # Extract status from NEW API response
+            payout_status = mudrape_response.get('payoutStatus', '').upper()
+            status_field = mudrape_response.get('status', '').lower()
+            status_code = mudrape_response.get('statuscode', 0)
             
-            print(f"Parsed - Status Code: {status_code}, Payout Status: {payout_status}, Mudrape TxnID: {mudrape_txn_id}")
+            # Extract transaction IDs
+            mudrape_txn_id = (mudrape_response.get('apiTxnId') or 
+                            mudrape_response.get('transactionId') or 
+                            mudrape_response.get('payoutId') or '')
+            
+            # Extract UTR/bank reference
+            utr = (mudrape_response.get('data', {}).get('bank_ref_num') or
+                   mudrape_response.get('data', {}).get('externalRef') or
+                   mudrape_response.get('uniqueId') or '')
+            
+            print(f"Parsed - Status: {payout_status}, Status Field: {status_field}, Status Code: {status_code}")
+            print(f"Mudrape TxnID: {mudrape_txn_id}, UTR: {utr}")
             
             # Map Mudrape status to our status
             # Database ENUM: INITIATED, QUEUED, INPROCESS, SUCCESS, FAILED, REVERSED
-            if payout_status and payout_status.strip():
-                payout_status_upper = payout_status.upper()
-                if payout_status_upper == 'PENDING':
-                    status = 'INITIATED'  # Map PENDING to INITIATED
-                elif payout_status_upper in ['SUCCESS', 'FAILED']:
-                    status = payout_status_upper
-                else:
-                    status = 'INITIATED'
-            elif status_code == '10000':
+            if payout_status == 'SUCCESS' or status_field == 'success' or status_code == 10000:
                 status = 'SUCCESS'
-            elif status_code == '10003':
+            elif payout_status == 'FAILED' or status_field == 'failed':
                 status = 'FAILED'
+            elif payout_status == 'PENDING' or status_field == 'pending':
+                status = 'INITIATED'  # Map PENDING to INITIATED
             else:
-                status = 'INITIATED'  # Default to INITIATED instead of PENDING
+                status = 'INITIATED'  # Default to INITIATED
             
             print(f"Mapped Status: {status}")
+            
+            # Extract deduction amount (amount debited from wallet)
+            deduction = mudrape_response.get('deduction', amount)
             
             return {
                 'success': True,
                 'status': status,
                 'status_code': status_code,
                 'mudrape_txn_id': mudrape_txn_id,
+                'utr': utr,
+                'deduction': deduction,
                 'message': mudrape_response.get('message', 'Payout initiated'),
-                'data': mudrape_response
+                'data': mudrape_response,
+                'payout_id': mudrape_response.get('payoutId', ''),
+                'timestamp': mudrape_response.get('timestamp', '')
             }
             
         except Exception as e:

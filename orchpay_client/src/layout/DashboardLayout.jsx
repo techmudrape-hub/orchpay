@@ -6,7 +6,7 @@ import {
   ChevronDown, LogOut, Bell, Search,
   FileText, Clock, DollarSign, Building,
   Lock, Key, Book, KeyRound, QrCode, CreditCard, User,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, AlertTriangle
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -78,13 +78,21 @@ const menuItems = [
     icon: CreditCard, 
     path: '/my-commercials' 
   },
+  { 
+    title: 'Chargebacks', 
+    icon: AlertTriangle, 
+    path: '/chargebacks' 
+  },
 ]
+
+// QR-only menu item added dynamically below
 
 export default function DashboardLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [expandedMenus, setExpandedMenus] = useState({})
+  const [qrEnabled, setQrEnabled] = useState(false)
   const [merchantInfo, setMerchantInfo] = useState({
     name: 'Merchant User',
     email: 'merchant@example.com'
@@ -104,7 +112,26 @@ export default function DashboardLayout() {
 
     // Verify token on mount
     verifyAuth()
+
+    // Check if QR is enabled for this merchant
+    checkQREnabled()
   }, [])
+
+  const checkQREnabled = async () => {
+    try {
+      const token = localStorage.getItem('merchantToken')
+      if (!token) return
+      const API_ROOT = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
+      const res = await fetch(`${API_ROOT}/merchant/qr-status`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.success) setQrEnabled(!!data.qr_enabled)
+    } catch {
+      // silent fail - QR menu just won't show
+    }
+  }
 
   const verifyAuth = async () => {
     try {
@@ -174,7 +201,7 @@ export default function DashboardLayout() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-thin">
-          {menuItems.map((item) => (
+          {[...menuItems, ...(qrEnabled ? [{ title: 'QR Transactions', icon: QrCode, path: '/qr-transactions' }] : [])].map((item) => (
             <div key={item.title} className="animate-slide-in">
               {item.submenu ? (
                 <div>
