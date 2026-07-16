@@ -1,4 +1,4 @@
-# Moneyone Client Dashboard
+# ORCHPAY Client Dashboard
 
 Merchant dashboard for Moneyone payment gateway.
 
